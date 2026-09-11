@@ -8,6 +8,7 @@ import {
   Crown,
   Database,
   Download,
+  Heart,
   Home,
   Monitor,
   Moon,
@@ -54,6 +55,7 @@ import {
   getChildrenIds,
   getFatherId,
   getMotherId,
+  getPartnerIds,
   getSiblingIds,
   getSpouseIds,
   groupByRelationDistance,
@@ -79,6 +81,45 @@ const THEME_META: Record<ThemeMode, { label: string; icon: typeof Sun }> = {
   light: { label: "浅色", icon: Sun },
   dark: { label: "深色", icon: Moon },
   system: { label: "跟随系统", icon: Monitor },
+};
+
+/** 焦点周围的关系快照 */
+interface Relations {
+  father: string | null;
+  mother: string | null;
+  partners: string[];
+  children: string[];
+  siblings: string[];
+}
+
+const NO_RELATIONS: Relations = {
+  father: null,
+  mother: null,
+  partners: [],
+  children: [],
+  siblings: [],
+};
+
+/**
+ * 新建一个关系：把「关系种类 + 焦点 + 新人物」映射成一个**纯函数**
+ * `FamilyState -> FamilyState`。
+ *
+ * 用查表取代 if/else 链：每个关系类型就是一个可单独测试、可单独替换的纯函数，
+ * 也不用在分支里手写不可变更新。`father` / `mother` 显式传 mode，
+ * 因为那是用户的选择，不该由性别推导覆盖。
+ */
+const RELATION_APPLIERS: Record<
+  RelationKind,
+  (state: FamilyState, focusId: string, personId: string) => FamilyState
+> = {
+  father: (state, focusId, personId) =>
+    addParentLink(state, focusId, personId, "father"),
+  mother: (state, focusId, personId) =>
+    addParentLink(state, focusId, personId, "mother"),
+  spouse: (state, focusId, personId) =>
+    addSpouseLink(state, focusId, personId),
+  child: (state, focusId, personId) =>
+    linkChildWithParents(state, personId, focusId),
 };
 
 /**
@@ -185,11 +226,21 @@ export function FamilyApp() {
   const focus = focusId && state.persons[focusId] ? focusId : null;
   const meId = state.meId;
 
-  const father = focus ? getFatherId(state, focus) : null;
-  const mother = focus ? getMotherId(state, focus) : null;
-  const spouses = focus ? getSpouseIds(state, focus) : [];
-  const children = focus ? getChildrenIds(state, focus) : [];
-  const siblings = focus ? getSiblingIds(state, focus) : [];
+  // 焦点周围的关系一次算齐，避免五处独立推导散落在组件里
+  const relations = useMemo<Relations>(() => {
+    if (!focus) return NO_RELATIONS;
+    return {
+      father: getFatherId(state, focus),
+      mother: getMotherId(state, focus),
+      // 配偶 ∪ 共同育有子女的人。只取 spouses 会让「先加父亲、后加母亲」
+      // 建出的数据在切到父亲时看不到母亲。
+      partners: getPartnerIds(state, focus),
+      children: getChildrenIds(state, focus),
+      siblings: getSiblingIds(state, focus),
+    };
+  }, [state, focus]);
+
+  const { father, mother, partners, children, siblings } = relations;
 
   const goParent = useCallback(() => {
     if (!focus) return;
@@ -226,23 +277,13 @@ export function FamilyApp() {
     (mode: RelationKind, draft: { name: string; gender: Gender }) => {
       if (!focus) return;
       const person = createPerson(draft);
-      setState((s) => {
-        let next: FamilyState = {
-          ...s,
-          persons: { ...s.persons, [person.id]: person },
-        };
-        if (mode === "father" || mode === "mother") {
-          // `mode` 是用户显式选择的父/母，必须胜过任何按性别推导的角色。
-          // 走 addParentLink（parents 的唯一构造者），不在这里裸写对象。
-          next = addParentLink(next, focus, person.id, mode);
-        } else if (mode === "spouse") {
-          next = addSpouseLink(next, focus, person.id);
-        } else if (mode === "child") {
-          // 有配偶时自动挂上双亲
-          next = linkChildWithParents(next, person.id, focus);
-        }
-        return next;
-      });
+      setState((s) =>
+        RELATION_APPLIERS[mode](
+          { ...s, persons: { ...s.persons, [person.id]: person } },
+          focus,
+          person.id
+        )
+      );
       setAddMode(null);
       setToast("已添加");
     },
@@ -275,6 +316,16 @@ export function FamilyApp() {
       setState((s) => addSpouseLink(s, focus, otherId));
       setAddMode(null);
       setToast("已结为配偶");
+    },
+    [focus]
+  );
+
+  /** 把「共同育有子女但未登记婚姻」的两人显式记为配偶 */
+  const addSpouseAs = useCallback(
+    (otherId: string) => {
+      if (!focus || otherId === focus) return;
+      setState((s) => addSpouseLink(s, focus, otherId));
+      setToast("已记为配偶");
     },
     [focus]
   );
@@ -322,24 +373,25 @@ export function FamilyApp() {
     setToast("已清空");
   }, []);
 
-  /** 用户为某个子女显式指定了缺失的那一端双亲 */
+  /**
+   * 用户为某个子女显式指定了缺失的那一端双亲。
+   *
+   * 收 item 而非 index：索引会在列表变动时漂移，而引用不会。
+   * 副作用放在 updater **外面**——updater 必须是纯函数，
+   * 否则 StrictMode 下跑两次就可能写两遍。
+   */
   const resolveAmbiguous = useCallback(
-    (index: number, spouseId: string) => {
-      setAmbiguous((list) => {
-        const item = list[index];
-        if (item) {
-          setState((s) => addParentLink(s, item.childId, spouseId, item.role));
-          setToast("已指定");
-        }
-        return list.filter((_, i) => i !== index);
-      });
+    (item: AmbiguousLink, spouseId: string) => {
+      setState((s) => addParentLink(s, item.childId, spouseId, item.role));
+      setAmbiguous((list) => list.filter((x) => x !== item));
+      setToast("已指定");
     },
     []
   );
 
   /** 用户选择「暂不指定」——只是不再提示，不写任何数据 */
-  const dismissAmbiguous = useCallback((index: number) => {
-    setAmbiguous((list) => list.filter((_, i) => i !== index));
+  const dismissAmbiguous = useCallback((item: AmbiguousLink) => {
+    setAmbiguous((list) => list.filter((x) => x !== item));
   }, []);
 
   if (!hydrated) {
@@ -481,7 +533,8 @@ export function FamilyApp() {
           meId={meId}
           father={father}
           mother={mother}
-          spouses={spouses}
+          partners={partners}
+          onMarry={addSpouseAs}
           children={children}
           siblings={siblings}
           onFocus={setFocusId}
@@ -525,7 +578,7 @@ export function FamilyApp() {
             <SheetTitle>数据管理</SheetTitle>
             <SheetDescription>导出备份、导入恢复，或清空全部数据</SheetDescription>
           </SheetHeader>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
+          <div className="space-y-2">
             <Button
               variant="outline"
               className="w-full justify-start"
@@ -585,13 +638,13 @@ export function FamilyApp() {
               以下子女缺一端双亲，而该家长有多位配偶，无法自动确定
             </SheetDescription>
           </SheetHeader>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
+          <div className="space-y-2.5">
             {ambiguous.length === 0 ? (
               <p className="py-6 text-center text-caption text-[var(--ink-faint)]">
                 没有待指定的关系
               </p>
             ) : (
-              ambiguous.map((item, index) => (
+              ambiguous.map((item) => (
                 <div
                   key={`${item.childId}-${item.role}`}
                   className="rounded-2xl border border-[var(--glass-border)] p-3"
@@ -608,7 +661,7 @@ export function FamilyApp() {
                         key={candidateId}
                         variant="outline"
                         size="sm"
-                        onClick={() => resolveAmbiguous(index, candidateId)}
+                        onClick={() => resolveAmbiguous(item, candidateId)}
                       >
                         {state.persons[candidateId]?.name ?? candidateId}
                       </Button>
@@ -616,7 +669,7 @@ export function FamilyApp() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => dismissAmbiguous(index)}
+                      onClick={() => dismissAmbiguous(item)}
                     >
                       暂不指定
                     </Button>
@@ -887,7 +940,7 @@ function SearchPanel({
           })}
         </div>
 
-        <div className="mt-3 max-h-[50dvh] overflow-y-auto">
+        <div className="mt-3 max-h-[50dvh] overflow-y-auto px-1 -mx-1">
           {visible.length === 0 ? (
             <p className="py-6 text-center text-caption text-[var(--ink-faint)]">
               没有匹配的成员
@@ -1041,7 +1094,7 @@ function TreeSection({
   meId,
   father,
   mother,
-  spouses,
+  partners,
   children,
   siblings,
   onFocus,
@@ -1049,13 +1102,14 @@ function TreeSection({
   onAdd,
   onSetMe,
   onRemoveSpouse,
+  onMarry,
 }: {
   state: FamilyState;
   focusId: string;
   meId: string | null;
   father: string | null;
   mother: string | null;
-  spouses: string[];
+  partners: string[];
   children: string[];
   siblings: string[];
   onFocus: (id: string) => void;
@@ -1063,6 +1117,7 @@ function TreeSection({
   onAdd: (mode: RelationKind) => void;
   onSetMe: (id: string) => void;
   onRemoveSpouse: (id: string) => void;
+  onMarry: (id: string) => void;
 }) {
   const focus = state.persons[focusId];
   if (!focus) return null;
@@ -1127,28 +1182,43 @@ function TreeSection({
             onEdit={() => onEdit(focusId)}
             onSetMe={meId !== focusId ? () => onSetMe(focusId) : undefined}
           />
-          {spouses.length > 0 ? (
+          {partners.length > 0 ? (
             <div className="flex flex-col gap-2">
-              {spouses.map((sid) => (
-                <div key={sid} className="relative">
-                  <PersonCard
-                    person={state.persons[sid]}
-                    roleLabel="配偶"
-                    isMe={sid === meId}
-                    onFocus={() => onFocus(sid)}
-                    onEdit={() => onEdit(sid)}
-                    onSetMe={sid !== meId ? () => onSetMe(sid) : undefined}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => onRemoveSpouse(sid)}
-                    className="absolute -right-1 -top-1 z-10 rounded-full bg-black/40 p-1 text-white/70 backdrop-blur-md hover:text-red-300"
-                    title="解除配偶"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
+              {partners.map((sid) => {
+                // 婚姻是独立事实：是配偶就写「配偶」，只是共同育有就写「另一亲长」。
+                const married = areSpouses(state, focusId, sid);
+                return (
+                  <div key={sid} className="relative">
+                    <PersonCard
+                      person={state.persons[sid]}
+                      roleLabel={married ? "配偶" : "另一亲长"}
+                      isMe={sid === meId}
+                      wufu={wufuOf(state, sid)}
+                      onEdit={() => onEdit(sid)}
+                      onSetMe={sid !== meId ? () => onSetMe(sid) : undefined}
+                    />
+                    {married ? (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveSpouse(sid)}
+                        className="absolute -right-1 -top-1 z-10 rounded-full bg-black/40 p-1 text-white/70 backdrop-blur-md hover:text-red-300"
+                        title="解除配偶"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onMarry(sid)}
+                        className="absolute -right-1 -top-1 z-10 rounded-full bg-black/40 p-1 text-white/70 backdrop-blur-md hover:text-[var(--accent)]"
+                        title="记为配偶"
+                      >
+                        <Heart className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <PersonCard
@@ -1587,15 +1657,19 @@ function PersonEditSheet({
             )}
           </div>
           {wufu && (
-            <p className="pt-1 text-caption leading-relaxed text-[var(--ink-faint)]">
-              五服：<span className="text-[var(--ink-soft)]">{wufu.grade}</span>
+            <p
+              className="truncate pt-1 text-caption text-[var(--ink-faint)]"
+              title={wufu.basis}
+            >
+              <span className="text-[var(--ink-soft)]">{wufu.grade}</span>
               （{wufu.months}） · {wufu.basis}
             </p>
           )}
         </SheetHeader>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
-          <div className="space-y-1.5">
+        {/* 不滚动：字段已压到一屏内。滚动会让「保存」在窄屏上被推走。 */}
+        <div className="space-y-2">
+          <div className="space-y-1">
             <Label htmlFor="p-name">姓名</Label>
             <Input
               id="p-name"
@@ -1611,7 +1685,7 @@ function PersonEditSheet({
           />
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label htmlFor="p-birth">出生年</Label>
               <Input
                 id="p-birth"
@@ -1622,7 +1696,7 @@ function PersonEditSheet({
                 maxLength={12}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label htmlFor="p-death">逝世年</Label>
               <Input
                 id="p-death"
@@ -1635,29 +1709,30 @@ function PersonEditSheet({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="p-home">籍贯</Label>
-            <Input
-              id="p-home"
-              placeholder="祖籍 / 籍贯，如：福建泉州"
-              value={draft.ancestralHome ?? ""}
-              onChange={(e) => set("ancestralHome", e.target.value)}
-              maxLength={50}
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="p-home">籍贯</Label>
+              <Input
+                id="p-home"
+                placeholder="如：福建泉州"
+                value={draft.ancestralHome ?? ""}
+                onChange={(e) => set("ancestralHome", e.target.value)}
+                maxLength={50}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="p-hh">户籍</Label>
+              <Input
+                id="p-hh"
+                placeholder="如：上海市浦东新区"
+                value={draft.household ?? ""}
+                onChange={(e) => set("household", e.target.value)}
+                maxLength={50}
+              />
+            </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="p-hh">户籍</Label>
-            <Input
-              id="p-hh"
-              placeholder="户籍所在地，如：上海市浦东新区"
-              value={draft.household ?? ""}
-              onChange={(e) => set("household", e.target.value)}
-              maxLength={50}
-            />
-          </div>
-
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <Label htmlFor="p-note">备注</Label>
             <Input
               id="p-note"
@@ -1668,7 +1743,7 @@ function PersonEditSheet({
             />
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <Label htmlFor="p-photo">照片链接</Label>
             <Input
               id="p-photo"
@@ -1850,8 +1925,9 @@ function AddRelationSheet({
         </div>
 
         {tab === "new" ? (
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-            <div className="space-y-1.5">
+          /* 新建人物表单有界，不滚动 */
+          <div className="space-y-2">
+            <div className="space-y-1">
               <Label htmlFor="a-name">姓名</Label>
               <Input
                 id="a-name"
@@ -1886,7 +1962,7 @@ function AddRelationSheet({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1 pb-2">
               {candidates.length === 0 ? (
                 <p className="py-8 text-center text-body text-[var(--ink-faint)]">
                   暂无可关联人物

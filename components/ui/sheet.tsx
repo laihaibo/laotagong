@@ -37,7 +37,7 @@ const SheetContent = React.forwardRef<
       ref={ref}
       data-side={side}
       className={cn(
-        "fixed z-50 flex min-h-0 flex-col gap-4 p-6 shadow-2xl transition ease-in-out glass-sheet",
+        "fixed z-50 flex min-h-0 flex-col gap-3 p-5 shadow-2xl transition ease-in-out glass-sheet",
         side === "bottom" &&
           "inset-x-0 bottom-0 max-h-[92dvh] rounded-t-[28px] animate-in slide-in-from-bottom duration-300",
         side === "center" &&

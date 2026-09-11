@@ -154,6 +154,40 @@ export function getSiblingIds(state: FamilyState, personId: string): string[] {
   return result;
 }
 
+/**
+ * 与 personId 共同育有子女的其他人 —— **从亲子边推导**。
+ *
+ * 关键区别：**共同养育是亲子边的必然推论，婚姻是另一件独立的事。**
+ * 把两者混为一谈，就会出现「一个孩子有两个家长、而这两个家长之间没有任何边」
+ * 的数据形态（先加父亲、再加母亲就会这样），于是切到父亲时看不到母亲。
+ *
+ * 推导出来的东西不该存进 `spouses` —— 存了就要维护一致性，
+ * 而两处维护正是本文件反复出现的 bug 来源。
+ */
+export function getCoParentIds(state: FamilyState, personId: string): string[] {
+  const result = new Set<string>();
+  for (const childId of getChildrenIds(state, personId)) {
+    const entry = state.parents[childId];
+    if (!entry) continue;
+    const other =
+      entry.fatherId === personId ? entry.motherId : entry.fatherId;
+    if (other && other !== personId) result.add(other);
+  }
+  return [...result];
+}
+
+/**
+ * 「锚点旁边那一栏」应该显示的人：**配偶 ∪ 共同育有子女的人**。
+ *
+ * 只取 spouses 会让「先加父亲、后加母亲」建出的数据在切到父亲时看不到母亲。
+ * 用这个函数取人，用 `areSpouses` 决定标签（配偶 / 另一亲长）与能否解除。
+ */
+export function getPartnerIds(state: FamilyState, personId: string): string[] {
+  const ids = new Set(getSpouseIds(state, personId));
+  for (const id of getCoParentIds(state, personId)) ids.add(id);
+  return [...ids];
+}
+
 export function areSpouses(state: FamilyState, a: string, b: string): boolean {
   return state.spouses.some(
     (s) => (s.a === a && s.b === b) || (s.a === b && s.b === a)

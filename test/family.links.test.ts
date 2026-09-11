@@ -9,8 +9,10 @@ import {
   createPerson,
   findRepairableLinks,
   getChildrenIds,
+  getCoParentIds,
   getFatherId,
   getMotherId,
+  getPartnerIds,
   getRelationDistances,
   getSpouseIds,
   groupByRelationDistance,
@@ -417,5 +419,69 @@ describe("存量数据修复 · 把父亲设为「我」后奶奶必须可见", 
     expect(ambiguous[0].candidates.sort()).toEqual(["N", "N2"]);
     // 未经用户指定之前，绝不写入
     expect(getMotherId(withTwo, "F")).toBeNull();
+  });
+});
+
+describe("共同养育推导 · 先加父亲再加母亲也必须看到彼此", () => {
+  /**
+   * 用户实际的建数据方式：给「我」添加父亲，再添加母亲。
+   * 两次 addParentLink 只写亲子边，**不会**建立父亲的婚姻边 ——
+   * 于是切到父亲时，母亲查不到。这就是「上一代看不见母亲」的根因。
+   */
+  function twoParentsNoMarriage(): FamilyState {
+    let state = seed([
+      ["ME", "male"],
+      ["F", "male"],
+      ["M", "female"],
+    ]);
+    state = addParentLink(state, "ME", "F", "father");
+    state = addParentLink(state, "ME", "M", "mother");
+    return state;
+  }
+
+  it("前提确认：这种建法确实没有婚姻边（否则这个测试就没意义）", () => {
+    const state = twoParentsNoMarriage();
+    expect(getFatherId(state, "ME")).toBe("F");
+    expect(getMotherId(state, "ME")).toBe("M");
+    expect(getSpouseIds(state, "F")).toEqual([]); // ← 问题就在这里
+  });
+
+  it("getCoParentIds 仍然能推出父母互为共同养育者", () => {
+    const state = twoParentsNoMarriage();
+    expect(getCoParentIds(state, "F")).toEqual(["M"]);
+    expect(getCoParentIds(state, "M")).toEqual(["F"]);
+  });
+
+  it("getPartnerIds 把母亲放进父亲那一栏 —— 切上一代不会再丢人", () => {
+    const state = twoParentsNoMarriage();
+    expect(getPartnerIds(state, "F")).toContain("M");
+    // 反向同理：母亲那一栏也有父亲
+    expect(getPartnerIds(state, "M")).toContain("F");
+  });
+
+  it("已登记婚姻时不会重复（spouses ∪ co-parents 去重）", () => {
+    let state = twoParentsNoMarriage();
+    state = addSpouseLink(state, "F", "M");
+    expect(getPartnerIds(state, "F")).toEqual(["M"]);
+    expect(getCoParentIds(state, "F")).toEqual(["M"]);
+  });
+
+  it("没有共同子女、也没有婚姻 → 空", () => {
+    const state = seed([
+      ["A", "male"],
+      ["B", "female"],
+    ]);
+    expect(getPartnerIds(state, "A")).toEqual([]);
+    expect(getCoParentIds(state, "A")).toEqual([]);
+  });
+
+  it("单亲子女只有一个家长时，那位家长没有共同养育者", () => {
+    let state = seed([
+      ["F", "male"],
+      ["C", "male"],
+    ]);
+    state = addParentLink(state, "C", "F", "father");
+    expect(getCoParentIds(state, "F")).toEqual([]);
+    expect(getPartnerIds(state, "F")).toEqual([]);
   });
 });
