@@ -1,0 +1,28 @@
+{"t":0,"agent":"system","event":"keyword_detected","keyword":"deep-interview"}
+{"t":0,"agent":"a394604","agent_type":"explore","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a02e7b2","agent_type":"explore","event":"agent_stop","success":true,"duration_ms":32464}
+{"t":0,"agent":"afa43bc","agent_type":"untracked-native-fork","event":"agent_stop","success":true,"synthetic":true,"telemetry_status":"unmatched_stop","reason":"SubagentStop arrived without a matching SubagentStart; native Agent/Task start telemetry was not observed."}
+{"t":0,"agent":"a56ab85","agent_type":"untracked-native-fork","event":"agent_stop","success":true,"synthetic":true,"telemetry_status":"unmatched_stop","reason":"SubagentStop arrived without a matching SubagentStart; native Agent/Task start telemetry was not observed."}
+{"t":0,"agent":"a394604","agent_type":"explore","event":"agent_stop","success":true,"duration_ms":99963}
+{"t":0,"agent":"system","event":"skill_invoked","skill_name":"oh-my-claudecode:plan"}
+{"t":0,"agent":"aplanne","agent_type":"planner-1","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a15f48d","agent_type":"planner-1","event":"agent_stop","success":true,"duration_ms":188825}
+{"t":0,"agent":"aplanne","agent_type":"planner-1","event":"agent_stop","success":true,"duration_ms":425248}
+{"t":0,"agent":"aarchit","agent_type":"architect-1","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"ab033e6","agent_type":"architect-1","event":"agent_stop","success":true,"duration_ms":219394}
+{"t":0,"agent":"acritic","agent_type":"critic-1","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"aarchit","agent_type":"architect-1","event":"agent_stop","success":true,"duration_ms":403131}
+{"t":0,"agent":"aarchit","agent_type":"architect-1","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"aarchit","agent_type":"architect-1","event":"agent_stop","success":true,"duration_ms":26859}
+{"t":0,"agent":"a891df0","agent_type":"critic-1","event":"agent_stop","success":true,"duration_ms":274744}
+{"t":0,"agent":"acritic","agent_type":"critic-1","event":"agent_stop","success":true,"duration_ms":315517}
+{"t":0,"agent":"acritic","agent_type":"critic-1","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"acritic","agent_type":"critic-1","event":"agent_stop","success":true,"duration_ms":30930}
+{"t":0,"agent":"ad789ec","agent_type":"untracked-native-fork","event":"agent_stop","success":true,"synthetic":true,"telemetry_status":"unmatched_stop","reason":"SubagentStop arrived without a matching SubagentStart; native Agent/Task start telemetry was not observed."}
+{"t":0,"agent":"aplanne","agent_type":"planner-2","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"ad89648","agent_type":"planner-2","event":"agent_stop","success":true,"duration_ms":223737}
+{"t":0,"agent":"aplanne","agent_type":"planner-2","event":"agent_stop","success":true,"duration_ms":257843}
+{"t":0,"agent":"acritic","agent_type":"critic-2","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"system","event":"skill_invoked","skill_name":"oh-my-claudecode:team"}
+{"t":0,"agent":"aworker","agent_type":"worker-backbone","event":"agent_start","parent_mode":"team"}
+{"t":0,"agent":"a3bf9e7","agent_type":"untracked-native-fork","event":"agent_stop","success":true,"synthetic":true,"telemetry_status":"unmatched_stop","reason":"SubagentStop arrived without a matching SubagentStart; native Agent/Task start telemetry was not observed."}

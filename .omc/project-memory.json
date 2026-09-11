@@ -1,0 +1,294 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1789109544902,
+  "projectRoot": "D:\\XiaomiMiMoProjects\\laotagong",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": ">=22",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "next",
+        "version": "16.0.0",
+        "category": "fullstack"
+      },
+      {
+        "name": "react",
+        "version": "19.2.0",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "19.2.0",
+        "category": "frontend"
+      }
+    ],
+    "packageManager": "pnpm",
+    "runtime": "Node.js 22"
+  },
+  "build": {
+    "buildCommand": "pnpm build",
+    "testCommand": null,
+    "lintCommand": "pnpm lint",
+    "devCommand": "pnpm dev",
+    "scripts": {
+      "dev": "next dev",
+      "build": "next build",
+      "start": "next start",
+      "lint": "next lint"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "app",
+      "components",
+      "lib",
+      "public",
+      "scripts"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "app": {
+      "path": "app",
+      "purpose": "Application code",
+      "fileCount": 3,
+      "lastAccessed": 1789109544766,
+      "keyFiles": [
+        "globals.css",
+        "layout.tsx",
+        "page.tsx"
+      ]
+    },
+    "components": {
+      "path": "components",
+      "purpose": "UI components",
+      "fileCount": 1,
+      "lastAccessed": 1789109544767,
+      "keyFiles": [
+        "family-app.tsx"
+      ]
+    },
+    "lib": {
+      "path": "lib",
+      "purpose": "Library code",
+      "fileCount": 3,
+      "lastAccessed": 1789109544794,
+      "keyFiles": [
+        "family.ts",
+        "theme.ts",
+        "utils.ts"
+      ]
+    },
+    "out": {
+      "path": "out",
+      "purpose": "Build output",
+      "fileCount": 9,
+      "lastAccessed": 1789109544795,
+      "keyFiles": [
+        "404.html",
+        "index.html",
+        "index.txt",
+        "_not-found.html",
+        "_not-found.txt"
+      ]
+    },
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 1,
+      "lastAccessed": 1789109544796,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 0,
+      "lastAccessed": 1789109544796,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "components/family-app.tsx",
+      "accessCount": 12,
+      "lastAccessed": 1789114873902,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 8,
+      "lastAccessed": 1789115966672,
+      "type": "file"
+    },
+    {
+      "path": "lib/family.ts",
+      "accessCount": 7,
+      "lastAccessed": 1789114837941,
+      "type": "file"
+    },
+    {
+      "path": "app/globals.css",
+      "accessCount": 7,
+      "lastAccessed": 1789114923251,
+      "type": "file"
+    },
+    {
+      "path": "lib/theme.ts",
+      "accessCount": 5,
+      "lastAccessed": 1789114838253,
+      "type": "file"
+    },
+    {
+      "path": "components/ui/sheet.tsx",
+      "accessCount": 5,
+      "lastAccessed": 1789114884554,
+      "type": "file"
+    },
+    {
+      "path": "app/layout.tsx",
+      "accessCount": 5,
+      "lastAccessed": 1789114931370,
+      "type": "file"
+    },
+    {
+      "path": "tsconfig.json",
+      "accessCount": 4,
+      "lastAccessed": 1789114618217,
+      "type": "file"
+    },
+    {
+      "path": "next.config.ts",
+      "accessCount": 3,
+      "lastAccessed": 1789111926093,
+      "type": "file"
+    },
+    {
+      "path": "components.json",
+      "accessCount": 3,
+      "lastAccessed": 1789111926445,
+      "type": "file"
+    },
+    {
+      "path": "components/ui/button.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1789114884983,
+      "type": "file"
+    },
+    {
+      "path": "components/ui/input.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1789114885792,
+      "type": "file"
+    },
+    {
+      "path": "components/ui/label.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1789114885390,
+      "type": "file"
+    },
+    {
+      "path": "app/page.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1789114931908,
+      "type": "file"
+    },
+    {
+      "path": "e2e/helpers/seed.ts",
+      "accessCount": 2,
+      "lastAccessed": 1789115206965,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/momo/AppData/Local/Temp/claude/D--XiaomiMiMoProjects-laotagong/5583e316-7a67-474f-8b8b-8b239893f2cf/tasks/b4bny8z1o.output",
+      "accessCount": 2,
+      "lastAccessed": 1789115307032,
+      "type": "file"
+    },
+    {
+      "path": "lib/utils.ts",
+      "accessCount": 1,
+      "lastAccessed": 1789110392906,
+      "type": "file"
+    },
+    {
+      "path": "components/ui/collapsible.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1789110399973,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 1,
+      "lastAccessed": 1789110412547,
+      "type": "file"
+    },
+    {
+      "path": "vitest.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1789114686603,
+      "type": "file"
+    },
+    {
+      "path": "test/setup.ts",
+      "accessCount": 1,
+      "lastAccessed": 1789114698108,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/momo/AppData/Local/Temp/claude/D--XiaomiMiMoProjects-laotagong/5583e316-7a67-474f-8b8b-8b239893f2cf/tasks/bucfuadqg.output",
+      "accessCount": 1,
+      "lastAccessed": 1789114793494,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/momo/AppData/Local/Temp/claude/D--XiaomiMiMoProjects-laotagong/5583e316-7a67-474f-8b8b-8b239893f2cf/tasks/bsl17jbit.output",
+      "accessCount": 1,
+      "lastAccessed": 1789114842443,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/momo/AppData/Local/Temp/claude/D--XiaomiMiMoProjects-laotagong/5583e316-7a67-474f-8b8b-8b239893f2cf/tasks/bad4e8sgs.output",
+      "accessCount": 1,
+      "lastAccessed": 1789114895410,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/momo/AppData/Local/Temp/claude/D--XiaomiMiMoProjects-laotagong/5583e316-7a67-474f-8b8b-8b239893f2cf/tasks/bw28rwh37.output",
+      "accessCount": 1,
+      "lastAccessed": 1789114938802,
+      "type": "file"
+    },
+    {
+      "path": "playwright.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1789115172207,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
