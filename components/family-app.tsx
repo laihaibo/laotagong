@@ -34,6 +34,7 @@ import {
   type Gender,
   type Person,
   type RelationKind,
+  addParentLink,
   addSpouseLink,
   areSpouses,
   createEmptyState,
@@ -157,16 +158,9 @@ export function FamilyApp() {
           persons: { ...s.persons, [person.id]: person },
         };
         if (mode === "father" || mode === "mother") {
-          next = {
-            ...next,
-            parents: {
-              ...next.parents,
-              [focus]: {
-                ...next.parents[focus],
-                [mode === "father" ? "fatherId" : "motherId"]: person.id,
-              },
-            },
-          };
+          // `mode` 是用户显式选择的父/母，必须胜过任何按性别推导的角色。
+          // 走 addParentLink（parents 的唯一构造者），不在这里裸写对象。
+          next = addParentLink(next, focus, person.id, mode);
         } else if (mode === "spouse") {
           next = addSpouseLink(next, focus, person.id);
         } else if (mode === "child") {
@@ -194,16 +188,7 @@ export function FamilyApp() {
   const handleLinkExistingAsParent = useCallback(
     (parentId: string, role: "father" | "mother") => {
       if (!focus || parentId === focus) return;
-      setState((s) => ({
-        ...s,
-        parents: {
-          ...s.parents,
-          [focus]: {
-            ...s.parents[focus],
-            [role === "father" ? "fatherId" : "motherId"]: parentId,
-          },
-        },
-      }));
+      setState((s) => addParentLink(s, focus, parentId, role));
       setAddMode(null);
       setToast("已关联");
     },
@@ -1065,7 +1050,7 @@ function PersonEditSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom">
+      <SheetContent side="responsive">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             编辑人物
@@ -1078,7 +1063,7 @@ function PersonEditSheet({
           <SheetDescription>完善姓名、生卒、籍贯与户籍信息</SheetDescription>
         </SheetHeader>
 
-        <div className="flex-1 space-y-3 overflow-y-auto pb-2">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
           <div className="space-y-1.5">
             <Label htmlFor="p-name">姓名</Label>
             <Input
@@ -1275,7 +1260,7 @@ function AddRelationSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom">
+      <SheetContent side="responsive">
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
           <SheetDescription>
@@ -1307,7 +1292,7 @@ function AddRelationSheet({
         </div>
 
         {tab === "new" ? (
-          <div className="flex-1 space-y-3 overflow-y-auto">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
             <div className="space-y-1.5">
               <Label htmlFor="a-name">姓名</Label>
               <Input
@@ -1343,7 +1328,7 @@ function AddRelationSheet({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <div className="flex-1 space-y-2 overflow-y-auto pb-2">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
               {candidates.length === 0 ? (
                 <p className="py-8 text-center text-body text-[var(--ink-faint)]">
                   暂无可关联人物
