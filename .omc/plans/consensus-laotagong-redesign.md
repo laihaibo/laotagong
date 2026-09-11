@@ -178,7 +178,7 @@ The tempting repair — "on load, for each child with one parent and a free slot
 - Any writer adds a `.dark <selector>` rule or a `@keyframes` block to `globals.css` after that landing — that is a P-3 event, not a style choice.
 
 **Mitigation baked into the plan.**
-1. **Steps 0 and 0b are the only steps permitted to run `pnpm add`.** `vitest`, `jsdom`, `@playwright/test`, `tw-animate-css`, `serve` all land together. Afterwards the lockfile is frozen; any later dependency need is escalated, not installed.
+1. **Step 0 is the only step permitted to run `pnpm add`.** `vitest`, `jsdom`, `tw-animate-css` land together. Afterwards the lockfile is frozen; any later dependency need is escalated, not installed.
 2. **`app/globals.css` is single-writer across Steps 3 and 3b, then closed.** Keeping 3b on the same agent is deliberate: the rule is *one writer at a time*, not *one agent ever*. The `@custom-variant dark` added in Step 3 is the sanctioned escape hatch, so no writer has a reason to reopen the file.
 3. **The split (Step 6) is serial, one file at a time.** This is the honest constraint: the file being dismantled is the shared resource, so it cannot be parallelised. Expand-contract is a valid variant but is *not* recommended — 1277 lines is small enough that coordination overhead exceeds the serial cost, and it defers all verification to one high-risk integration point.
 4. **File-ownership table (§3.7) is normative** and now covers every created file (B3/B7). One agent per file at a time.
@@ -195,33 +195,27 @@ Every step ends with `pnpm build` green. **Exception, stated explicitly:** Steps
 
 **Files:** `package.json`, `pnpm-lock.yaml`, `vitest.config.ts` (new), `test/setup.ts` (new), `.gitignore`, `.github/workflows/deploy.yml`
 
-- `pnpm add -D vitest jsdom @playwright/test tw-animate-css serve` — **all five, once.** (registry: vitest 5.0.0, jsdom 30.0.1, @playwright/test 1.63.0, tw-animate-css 1.4.0, serve 14.x)
+- `pnpm add -D vitest jsdom tw-animate-css` — **all three, once.** (registry: vitest 5.0.0, jsdom 30.0.1, tw-animate-css 1.4.0)
 - `vitest.config.ts`: `resolve.alias { "@": <root> }` (mirrors `tsconfig.json:25-29`), `environment: "jsdom"`, `include: ["test/**/*.test.ts"]`.
-- Scripts (final set, **`lint` deleted**): `"test": "vitest run"`, `"test:watch": "vitest"`, `"e2e": "playwright test"`, `"e2e:serve": "serve out -l 4173"`, `"check:contrast": "node scripts/check-contrast.mjs"`.
-- **Delete `package.json:12` `"lint": "next lint"` (non-blocking 10).** Verified dead: `next-lint.js` does not exist under `node_modules/next/dist/cli/` on Next 16.3.4. No step may gate on it. A dead quality gate trains people to distrust red/green — which is precisely what Driver 3 exists to prevent, so leaving it is not neutral. If linting is wanted later it must be re-introduced as a working `eslint` invocation, not as a corpse.
-- `.gitignore`: append `coverage/`, `playwright-report/`, `test-results/`.
-- **`npx playwright install --with-deps chromium`** — without this, `pnpm e2e` fails on a clean clone (non-blocking 9). Documented in `README.md` (Step 8).
-- **CI (B2) — `.github/workflows/deploy.yml` gains two jobs and three line changes:**
-  - `:36` `pnpm install --no-frozen-lockfile` → **`pnpm install --frozen-lockfile`**. Iteration 1 flagged this as the worse option and then left it in place.
+- Scripts (final set, **`lint` deleted**): `"test": "vitest run"`, `"test:watch": "vitest"`, `"check:contrast": "node scripts/check-contrast.mjs"`.
+- **Delete `package.json:12` `"lint": "next lint"` (non-blocking 10).** Verified dead: `next-lint.js` does not exist under `node_modules/next/dist/cli/` on Next 16.3.4. No step may gate on it.
+- `.gitignore`: append `coverage/`, `test-results/`.
+- **CI (B2) — `.github/workflows/deploy.yml` gains a verify job:**
+  - `:36` `pnpm install --no-frozen-lockfile` → **`pnpm install --frozen-lockfile`**.
   - New `verify` job: checkout → pnpm 9 → node 22 (`cache: pnpm`) → `pnpm install --frozen-lockfile` → **`pnpm test`** → **`pnpm check:contrast`**.
-  - New `e2e` job (`needs: verify`): + `actions/cache` on `~/.cache/ms-playwright` keyed `${{ runner.os }}-pw-${{ hashFiles('pnpm-lock.yaml') }}` → `npx playwright install --with-deps chromium` → `pnpm build` → `pnpm e2e`. Uploads `playwright-report/` on failure (`actions/upload-artifact@v4`, `if: failure()`).
-  - `build` job gains `needs: e2e`, so **a red test suite blocks the deploy**. Without this, Driver 3's entire justification ("the harness is THE regression guard") is false.
+  - `build` job gains `needs: verify`, so **a red test suite blocks the deploy**.
 - **AC:** none directly; enables AC-17/18/19/20/23 verification and Steps 3/3b.
 - **Effort:** small. **Cannot be split** — it is the only lockfile-mutating step (P-3 mitigation 1).
 - **Verification:** `pnpm install` clean; `pnpm build` green; `pnpm test` exits 0; `head -1 pnpm-lock.yaml` still reads `lockfileVersion: '9.0'` (local pnpm is 11.22.0 while `deploy.yml:27` pins pnpm 9 — both emit 9.0, so they are compatible, but a silent version bump here would only fail in CI, and with `--frozen-lockfile` it would now fail *loudly*, which is the point).
 - **Working-tree state to resolve before Step 0 runs:** `git status` currently shows `package.json` modified — the `"packageManager": "pnpm@9.15.9"` field has been removed from the working tree while it is still present at `HEAD`. This is **not** an edit made by this plan. It must be either committed or reverted before Step 0, because Step 0 is the designated single writer of `package.json` + `pnpm-lock.yaml` (P-3 mitigation 1) and cannot proceed on a dirty file.
 
-#### Step 0b · Playwright harness skeleton (so no step invokes a tool with zero inputs)
+#### Step 0b · Test fixtures + jsdom setup (so no step invokes a tool with zero inputs)
 
-**Files:** `playwright.config.ts` (new), `e2e/helpers/seed.ts` (new), `e2e/fixtures/*.json` (new), `e2e/smoke.spec.ts` (new)
+**Files:** `test/setup.ts` (new), `test/fixtures/*.json` (new)
 
-Iteration 1 registered `"e2e": "playwright test"` in Step 0 and invoked it as Step 4's verification, while **no step created a single `e2e/*.spec.ts`**. With zero specs, `playwright test` exits non-zero — the verification could not have passed. v2 gives the harness an owning step and one real spec, so `pnpm e2e` is green from Step 0b onward and each later step *adds* its own spec file.
-
-- `playwright.config.ts`: `webServer { command: "pnpm e2e:serve", url: "http://localhost:4173", reuseExistingServer: !process.env.CI, timeout: 120_000 }`, `use { baseURL: "http://localhost:4173", reducedMotion: "reduce" }` (kills R10's animation flake at the source), projects: `mobile-chrome` (375×667) and `desktop-chrome` (1440×900), `reporter: [["html", { open: "never" }], ["list"]]`.
-- `e2e/helpers/seed.ts`: `seed(rawOrFixture)` — `page.addInitScript` writing `localStorage["laotagong:family:v1"]` **before** app boot, so tests exercise the real `loadState` path. Also `openSheet()`, `readStore()`, `expectNoHorizontalScroll()`.
-- `e2e/fixtures/`: `broken-v1.json` (the AC-17/P-2 shape: `C.fatherId = A`, no `motherId`, `spouses: []`), `two-spouse.json`, `three-generation.json`, `orphan.json`. Committed, not generated — P-2 mitigation 4 requires the exact pre-fix bytes.
-- `e2e/smoke.spec.ts`: `app boots and renders the brand`. One assertion. Its job is to make the runner valid, not to prove anything.
-- **Verification:** `pnpm build && pnpm e2e` exit 0 on a clean clone with exactly 1 spec passing. This is the gate that Step 4's verification will later rely on.
+- `test/setup.ts`: jsdom environment setup, `beforeEach` cleanup for localStorage, matchers if needed.
+- `test/fixtures/`: `broken-v1.json` (the AC-17/P-2 shape: `C.fatherId = A`, no `motherId`, `spouses: []`), `two-spouse.json`, `three-generation.json`, `orphan.json`. Committed, not generated — P-2 mitigation 4 requires the exact pre-fix bytes.
+- **Verification:** `pnpm test` exits 0 with the smoke test passing.
 
 #### Step 1 · Data model + single field list (`lib/family.ts` → `lib/family/`)
 
@@ -540,8 +534,7 @@ Iteration 1's table was self-described as normative and then contradicted its ow
 |---|---|---|
 | `package.json`, `pnpm-lock.yaml` | **1 agent, once** | Step 0 only; frozen after |
 | `.github/workflows/deploy.yml` | same 1 agent | Step 0 (B2); Step 8 verifies only |
-| `vitest.config.ts`, `test/setup.ts`, `test/fixtures/**` | 1 agent | Step 0 (`vitest.config.ts`), Step 0b (`test/fixtures/*.json`), Step 3 (contrast baseline) |
-| `playwright.config.ts`, `e2e/helpers/**`, `e2e/fixtures/**`, `e2e/smoke.spec.ts` | 1 agent | Step 0b only |
+| `vitest.config.ts`, `test/setup.ts`, `test/fixtures/**` | 1 agent | Step 0 (`vitest.config.ts`, `test/setup.ts`), Step 3 (contrast baseline) |
 | `lib/family/types.ts`, `normalize.ts`, `model.ts`, `query.ts`, `links.ts`, `sanitize.ts`, `index.ts` | 1 agent | **Steps 1, 2** (creation + links/repair); then **Step 6** (`firstPersonId` moves in), then **Step 7i** (`getRelationDistances`, `groupByRelationDistance`) |
 | `app/globals.css` | **1 agent** | Steps **3 + 3b** as one landing; **closed after** |
 | `scripts/check-contrast.mjs` | same 1 agent | Step 3 |
@@ -556,7 +549,7 @@ Iteration 1's table was self-described as normative and then contradicted its ow
 | `components/sheets/**` | 1 agent | Step 6 (move) then 7c → 7d, and 7j |
 | `components/common/**`, `components/layout/**` | 1 agent | Step 6 (move) then 7g, 7h |
 | `test/**` | 1 agent | Step 1 (`family.sanitize`), Step 2 (`family.links`, `family.repair`), Step 3b (`theme`, `utils`), Step 6 (visual-freeze baseline) |
-| `e2e/**` | 1 agent | Step 0b (harness) then **per-step**: 2 (bug-spouse-backfill, repair-banner), 3 (contrast), 3b (type-scale), 4 (sheet), 5 (shell, key-hygiene), 6 (visual-freeze), 7 (per sub-step), 8 (basepath, theme) |
+| `test/**` (integration) | 1 agent | Step 2 (bug-spouse-backfill, repair-banner), 4 (sheet), 5 (shell, key-hygiene), 6 (visual-freeze), 7a (cards), 7c/7d (events), 7e (search), 7j (ambiguous-picker), 7k (export) |
 | `CLAUDE.md`, `.gitignore`, `README.md`, `app/layout.tsx` | 1 agent each | Step 8 |
 
 Any need to write outside your window is an escalation, not a judgement call. `app/globals.css` reopens are the P-3 trigger to watch. **No file in this table is created by a step that does not own it — that is the specific defect B3 identified.**
@@ -594,37 +587,44 @@ Starting state: **0 test files, 0 test runners, and a CI pipeline with no test s
 | **repair predicate** | Seed the broken shape through `importState('<raw JSON>')` — **not** through builder calls (P-2 mitigation 4) | AC-17 |
 | **repair is conservative** | 2-spouse fixture yields `repairable.length === 0` **and** `ambiguous.length === 1` — the second half is the assertion that proves ambiguity is not silently dropped | AC-20, P4 |
 
-### 4.3 E2E — Playwright (`@playwright/test` 1.63)
+### 4.3 UI verification — vitest jsdom + human checklist (NO Playwright)
 
-Serve the real static artefact, not the dev server (`playwright.config.ts` `webServer` → `pnpm e2e:serve` on `out/` at :4173). A second pass builds with `NEXT_PUBLIC_BASE_PATH=/laotagong` and serves `out/` under that prefix to reproduce a GitHub Pages project site.
+**用户选择人工验证替代 Playwright。** 原计划 §4.3 的 17 个 E2E spec 拆为：
+- **jsdom 集成测试**（vitest）：覆盖所有**不依赖真实像素渲染**的断言（数据往返、DOM 结构、事件流、localStorage 键卫生、computed class 名）。
+- **人工验证清单**（§4.4 扩展）：覆盖所有**依赖真实浏览器渲染**的断言（对比度、字阶、布局、动画）。
 
-**Every `[data-card]` assertion asserts a non-empty NodeList first (B9).** AC-12/13 target `[data-card=me]` / `[data-card=relative]` and AC-31 targets `[data-card]`, but iteration 1's plan never added the attribute — the card root was a bare `div.glass-card` (`family-app.tsx:842-848`). AC-12/13 would fail loudly (recoverable), but **AC-31's "no `[data-card]` innerText contains event text" was vacuously true on an empty NodeList** — green while the AC was violated. v2 creates the attribute in 7a and makes emptiness a failure everywhere:
+**Every `[data-card]` assertion asserts a non-empty NodeList first (B9).** AC-12/13 target `[data-card=me]` / `[data-card=relative]` and AC-31 targets `[data-card]`, but iteration 1's plan never added the attribute — the card root was a bare `div.glass-card` (`family-app.tsx:842-848`). AC-12/13 would fail loudly (recoverable), but **AC-31's "no `[data-card]` innerText contains event text" was vacuously true on an empty NodeList** — green while the AC was violated. v2 creates the attribute in 7a and makes emptiness a failure everywhere.
 
-```ts
-const cards = page.locator("[data-card]");
-await expect(cards).not.toHaveCount(0);   // ← the gate iteration 1 lacked
-```
+#### 4.3.1 jsdom 集成测试（vitest + jsdom，覆盖数据结构 + DOM 行为）
 
-| Spec file | Named test | Assertion | AC | Owner step |
+| Test file | Named test | Assertion | AC | Owner step |
 |---|---|---|---|---|
-| `e2e/smoke.spec.ts` | `app boots and renders the brand` | Non-empty `header [data-header-item]` | — | 0b |
-| **`e2e/bug-spouse-backfill.spec.ts`** | **`AC-17: 先加子女后加配偶，子女设为「我」后另一位亲长可见`** | Seed the exact AC-17 pre-state from `e2e/fixtures/broken-v1.json`; add spouse B; set C as 我; assert B's card is in the DOM and B is reachable in the search panel under 父辈/母辈. Also assert `JSON.parse(localStorage['laotagong:family:v1']).parents[C].motherId === B`. | **AC-17** | 2 |
-| `e2e/repair-banner.spec.ts` | `orphaned v1 data surfaces both a repairable count and an ambiguous count, and repair is explicit` | Seed broken v1 JSON; assert the banner reads `发现 1 条` **and** `0 条需指定`; assert **no** mutation before the button is clicked; click; assert the link is written. Second case: seed `two-spouse.json`; assert `0 条可修复` and `1 条需指定`, and that the 需指定 affordance opens the picker. | AC-17, 20, P-2, P-4 | 2 |
-| `e2e/contrast.spec.ts` | `worst-case card text meets AA in both themes` | The pixel-sampling method in Step 3, at the 生卒年 caption over `--orb-1` in light and dark; run twice per theme and require agreement within ±0.1. | **AC-4** | 3 |
-| `e2e/type-scale.spec.ts` | `h1 is 28px mobile / 34px desktop; no sub-13px body type remains` | `getComputedStyle(h1)` at 375 and 1280; plus a scan asserting no *content* element computes `fontSize < 13px`. | **AC-2** | 3b |
-| `e2e/sheet.spec.ts` | `at 375px the edit sheet is bottom-anchored` · `at 1023/1025 the form flips` · `long content scrolls, never clips` · `width is monotonic` | bottom: content box `bottom ≈ innerHeight`, `borderTopLeftRadius === 28px`. Centred: `\|centerX − innerWidth/2\| < 2`, `\|centerY − innerHeight/2\| < 2`. **Monotonicity: `offsetWidth` at 768 ≤ `offsetWidth` at 1440** (the P5 edge). Overflow: with a 12-event person, the scroll container `scrollHeight > clientHeight` and 保存 stays clickable. | AC-15, 16 | 4 |
-| `e2e/shell.spec.ts` | `header and footer are full-bleed at 1440px` · `375px has no horizontal scroll` | `header`/`footer` `getBoundingClientRect().width === innerWidth`; `documentElement.scrollWidth <= clientWidth` at 375×667 on every route state (empty / tree / search open / sheet open); **`header [data-header-item]` length === 3 in BOTH collapsed and expanded search states**; `header` contains none of 导出/导入/设置/清空. | AC-5, 6, 7, 32 | 5 |
-| `e2e/key-hygiene.spec.ts` | `no sixth localStorage key appears` | After a full pass (open all sheets, expand search, dismiss the repair banner), `Object.keys(localStorage).sort()` deep-equals `["laotagong:family:v1","laotagong:theme"]`. | AC-10, P2 | 5 |
-| `e2e/visual-freeze.spec.ts` | `DOM hash matches the pre-split baseline` | Seed the same fixture, `innerText`-normalise `document.body.innerHTML`, SHA-256. Recorded before Step 6; compared after. | Step 6 exit gate | 6 |
-| `e2e/search.spec.ts` | `one input drives both search and filter` · `results group by relation distance` | `[data-search-root]` contains exactly **one** `input` and `≥3 [data-filter-chip]`; assert there is no second bare `<input>` anywhere in the panel. Assert group headers appear in the order 祖辈/父辈/同辈/子辈/孙辈/未连接; assert an isolated person lands in 未连接. | AC-8, 9, 10, 11 | 7e |
-| `e2e/cards.spec.ts` | `MeCard shows all six fields, RelativeCard shows three` · `all card widths are equal` · `connector anchors are aligned` | `[data-card]` non-empty (B9 gate); MeCard text includes 籍贯/户籍/备注; RelativeCard does not. Every card in a grid row has identical `offsetWidth`. Connector `div` centres within 1px of the corresponding card-column centre across a 2-generation fixture at 375/768/1024/1440. | AC-12, 13, 14 | 7a |
-| `e2e/spacing.spec.ts` | `named spacing tokens are actually consumed` | `getComputedStyle(card).paddingTop === "16px"`; `getComputedStyle(section).marginBottom === "32px"`. **Computed style on the real UI — not a grep** (non-blocking 2/3's consumption gate). | AC-3 (partial) | 7a/7f |
-| `e2e/photo.spec.ts` | `a broken photoUrl falls back without a broken-image glyph` | Point `photoUrl` at a 404 origin; assert **no** `<img>` remains in the avatar slot and the initial-letter fallback is rendered. | AC-28, 29 | 7d |
-| `e2e/events.spec.ts` | `family events are editable in the sheet and absent from the card face` | Add/edit/delete an event; then assert `[data-card]` is non-empty **and** the event text appears in none of them. | AC-30, 31 | 7c/7d |
-| `e2e/ambiguous-picker.spec.ts` | `a multi-spouse link asks instead of guessing` | Seed `two-spouse.json`, attempt to link a child; assert the picker appears, that 暂不指定 leaves both slots empty, and that choosing one writes exactly that slot. | AC-20 | 7j |
-| `e2e/export.spec.ts` | `exported JSON contains photoUrl and events` | Intercept the download; parse; assert both fields present — the end-to-end proof against P-1. | AC-21 | 7k |
-| `e2e/basepath.spec.ts` | `no 404s at the project-site path` | Build with `NEXT_PUBLIC_BASE_PATH=/laotagong`; assert every network response is `< 400`; assert the external `photoUrl` is requested **without** the basePath prefix. | AC-33 | 8 |
-| `e2e/theme.spec.ts` | `every new surface renders in both themes` | Screenshot header/main/footer/search-panel/edit-sheet at both `applyTheme` values; assert no element's computed `color` equals its composited `background-color`. | AC-34 | 8 |
+| `test/bug-spouse-backfill.test.ts` | **`AC-17: 先加子女后加配偶，子女设为「我」后另一位亲长可见`** | Seed the exact AC-17 pre-state; add spouse B via `addSpouseLink`; assert `state.parents[C].motherId === B`. Also assert `findRepairableLinks` on the **pre-fix** shape returns `repairable.length === 1`. | **AC-17** | 2 |
+| `test/repair-banner.test.ts` | `orphaned v1 data surfaces both repairable and ambiguous counts` | Seed broken v1 JSON via `importState`; assert `findRepairableLinks` returns 1 repairable + 0 ambiguous. Second case: seed two-spouse shape; assert 0 repairable + 1 ambiguous. Assert `applyRepairs` writes the link; assert it is idempotent. | AC-17, 20, P-2, P-4 | 2 |
+| `test/cards.test.ts` | `MeCard renders 6 fields, RelativeCard renders 3` · `data-card attribute present` | Render MeCard/RelativeCard in jsdom with a fixture; assert `[data-card]` is non-empty (B9 gate); MeCard text includes 籍贯/户籍/备注; RelativeCard does not. | AC-12, 13, 14 | 7a |
+| `test/events.test.ts` | `events editable in sheet, absent from card face` | Render PersonEditSheet with a person; add an event via the form; assert the event text appears in the sheet but NOT in any `[data-card]`. | AC-30, 31 | 7c/7d |
+| `test/search.test.ts` | `one input drives both search and filter` · `results group by relation distance` | Render SearchPanel; assert `[data-search-root]` contains exactly one `input` and ≥3 `[data-filter-chip]`; assert group headers appear in order 祖辈/父辈/同辈/子辈/孙辈/未连接; assert an isolated person lands in 未连接. | AC-8, 9, 10, 11 | 7e |
+| `test/key-hygiene.test.ts` | `no sixth localStorage key appears` | After a full jsdom pass (save/load/theme), `Object.keys(localStorage).sort()` deep-equals `["laotagong:family:v1","laotagong:theme"]`. | AC-10, P2 | 5 |
+| `test/sheet.test.ts` | `sheet side is bottom on mobile, center on desktop` | Mock `innerWidth` at 375 and 1025; render Sheet; assert the content has `data-side="bottom"` / `data-side="center"` respectively. Assert `min-h-0` is present on the scroll container. | AC-15, 16 | 4 |
+| `test/shell.test.ts` | `header/footer full-bleed, 3 header items, no data action in header` | Render the shell; assert `header [data-header-item]` length === 3; assert `header` contains none of 导出/导入/设置/清空; assert those texts appear in `footer`. | AC-5, 6, 7, 32 | 5 |
+| `test/spacing.test.ts` | `named spacing tokens are actually consumed` | Render a card + section; assert the computed className includes `p-card` and `mb-section` (class-name assertion, not pixel). | AC-3 (partial) | 7a/7f |
+| `test/photo.test.ts` | `broken photoUrl falls back to initial-letter` | Render RelativeCard with a `photoUrl` that 404s; assert no `<img>` remains and the initial-letter span is rendered. | AC-28, 29 | 7d |
+| `test/ambiguous-picker.test.ts` | `multi-spouse link asks instead of guessing` | Seed two-spouse shape; attempt to link a child; assert the picker appears; assert 暂不指定 leaves both slots empty; assert choosing one writes exactly that slot. | AC-20 | 7j |
+| `test/export.test.ts` | `exported JSON contains photoUrl and events` | Call `exportState` on a person with photoUrl + events; parse; assert both fields present. | AC-21 | 7k |
+| `test/visual-freeze.test.ts` | `DOM structure matches pre-split baseline` | Seed the same fixture; normalise `document.body.innerHTML` (trim whitespace, sort attrs); SHA-256. Recorded before Step 6; compared after. | Step 6 exit gate | 6 |
+
+#### 4.3.2 人工验证清单（浏览器真实渲染，用户执行）
+
+以下项**必须由用户在真实浏览器中验证**，因为 jsdom 不实现 `backdrop-filter`、`getComputedStyle` 像素值、断点切换：
+
+| # | AC | 验证方法 | 通过标准 |
+|---|---|---|---|
+| H1 | AC-4 | DevTools 对比度检查器，在浅色和深色模式下检查生卒年文字叠加在 `--orb-1` 上的点 | 两点均 ≥ 4.5:1 |
+| H2 | AC-2 | DevTools 检查 h1 在 375px / 1280px 下的 `fontSize` | 28px / 34px；正文最小 ≥ 13px |
+| H3 | AC-13 | 视口 375 → 768 → 1024 → 1440，目测连线是否始终居中 | 连线不偏移 |
+| H4 | AC-15 | 视口 375 和 1025 下打开编辑弹窗 | 375 底部 Sheet / 1025 居中弹窗 |
+| H5 | AC-34 | 切换主题，目测所有新 UI 表面 | 两套主题均正确渲染 |
+| H6 | AC-33 | 用 `NEXT_PUBLIC_BASE_PATH=/laotagong` 构建并 serve | 无 404；外部 photoUrl 不带 basePath 前缀 |
 
 ### 4.4 Observability / manual verification — and how to make it cheap
 
@@ -653,11 +653,11 @@ await expect(cards).not.toHaveCount(0);   // ← the gate iteration 1 lacked
 | **R7** | **`--text-*: initial` lands without 3b → every named type utility renders at inherited size (B5)** | **High if 3+3b are ever split across agents or commits that diverge** | High — app-wide typographic collapse | 3+3b declared **one landing**, same agent, and 3b sequenced **before Step 6** so the move oracle survives. Gate: `grep … text-xs …` → 0 plus `type-scale.spec.ts` |
 | R8 | Deleting `lib/family.ts` breaks a call site missed by the barrel | Low — the barrel makes it a pure move | Medium — build failure | `pnpm build` after every move; `pnpm test` covers the public surface |
 | R9 | `photoUrl` pasted as a site-relative path 404s under the project site | Medium — `/photos/x.jpg` looks valid in dev | Medium — broken avatar, and AC-29's fallback would hide it, masking the cause | Validate `http(s)://` on save with an inline hint (7b); `basepath.spec.ts` asserts the external URL is not prefixed |
-| R10 | E2E flake from `fade-node`/`me-pulse` animations (`globals.css:312-339`) | Medium | Low — noise erodes trust in the suite | `reducedMotion: "reduce"` set globally in `playwright.config.ts`; assert on geometry + text, never on opacity |
+| R10 | jsdom 测试无法验证真实像素渲染（对比度、字阶、布局） | **Certain** — jsdom 不实现 `backdrop-filter` / `getComputedStyle` 像素值 | Medium — 人工验证覆盖 | 人工验证清单（§4.3.2 H1–H6）覆盖所有像素级断言；jsdom 测试覆盖所有数据/DOM 行为断言 |
 | R11 | A quality gate that is dead or vacuous trains people to distrust red/green | **Certain** (it already happened: `next lint`, and iteration 1's three vacuous checks) | High — the failure mode Driver 3 exists to prevent | `lint` script deleted this round (no step gates on it); `check-contrast` demoted with its reach documented; `[data-card]` assertions must be non-empty; AC-6/AC-8 selectors bound to `data-*` contracts |
 | R12 | `themeColor` cannot follow the app's 3-way mode from a static export (only OS preference) | **Certain** | Low | `Viewport.themeColor` media-array (Step 8) + the limitation documented rather than silently half-fixed |
 | R13 | 1024px breakpoint is unvalidated (spec risk #5, line 344) | Medium | Low — one CSS number | Step 4 implements it as a single `lg:` token; tested at 1023/1025, and width monotonicity is now an assertion |
-| R14 | Four stacked `backdrop-filter` layers cost frames on low-end mobile (spec risk #4, line 342) | Medium | Medium | Out of scope to weaken glass (spec Non-Goal, line 85). Instrument: Playwright `page.evaluate` frame-timing on the tree while scrolling; if p95 frame > 32ms, escalate glass strength as the first lever, as the spec pre-authorises |
+| R14 | Four stacked `backdrop-filter` layers cost frames on low-end mobile (spec risk #4, line 342) | Medium | Medium | Out of scope to weaken glass (spec Non-Goal, line 85). **人工验证**：在低端设备上滚动图谱，目测掉帧；若明显卡顿，将玻璃强度作为第一个可调杠杆（spec 已预授权） |
 | R15 | The `repairable` / `ambiguous` split is added but only one bucket is rendered | Medium — it is exactly the shape of iteration 1's defect | High — P4 degrades to "ambiguity gets a one-shot toast" | Both buckets are rendered by 7h and asserted in `repair-banner.spec.ts`'s second case (`0 条可修复` **and** `1 条需指定`) |
 
 ---
@@ -674,52 +674,52 @@ cd /d/XiaomiMiMoProjects/laotagong && pnpm build            # exit 0, out/ regen
 | AC | Verification | Command / check |
 |---|---|---|
 | AC-1 | Glass parameters byte-identical | `git diff app/globals.css` against the closed delta list (Step 3's verification item 4): no change to `blur(28px) saturate(170%)` (`:186`), the `125deg` `::before` (`:201-206`), or the three `.ambient span` rules (`:114-138`). **The `shasum out/index.html` check is deleted — it was impossible to satisfy (B4).** |
-| **AC-2** | 5-level scale; h1 28/34; body ≥13px | `grep -cE '^\s*--text-[a-z]+:' app/globals.css` = **5**; and **`grep -cE '^\s*--text-\*: initial' app/globals.css` = 1**; and **`grep -rn "text-xs\|text-sm\|text-base\|text-lg\|text-xl\|text-2xl\|text-\[1[0-4]px\]" components/` → 0** (from 37 occurrences); `e2e/type-scale.spec.ts` computed-style assertions. **Iteration 1's check grepped only `text-\[1[0-2]px\]` and never `text-xs`, which is why 10 live `text-xs` uses — several of them body copy — passed while AC-2 was violated.** |
+| **AC-2** | 5-level scale; h1 28/34; body ≥13px | `grep -cE '^\s*--text-[a-z]+:' app/globals.css` = **5**; and **`grep -cE '^\s*--text-\*: initial' app/globals.css` = 1**; and **`grep -rn "text-xs\|text-sm\|text-base\|text-lg\|text-xl\|text-2xl\|text-\[1[0-4]px\]" components/` → 0** (from 37 occurrences). **人工验证 H2**（DevTools 字阶 + 正文最小 13px）。**Iteration 1's check grepped only `text-\[1[0-2]px\]` and never `text-xs`, which is why 10 live `text-xs` uses — several of them body copy — passed while AC-2 was violated.** |
 | **AC-3** | 8px grid — **PARTIALLY MET, reason recorded** | Named tokens exist: `grep -cE '^\s*--spacing-' app/globals.css` = **2**; base untouched: `grep -cE '^\s*--spacing:' app/globals.css` = **0**. **Consumption (non-blocking 2 — iteration 1 never checked this):** `e2e/spacing.spec.ts` asserts `getComputedStyle(card).paddingTop === "16px"` and `getComputedStyle(section).marginBottom === "32px"` on the real UI. **Not met:** the literal "全套切换到 8px 基准网格" — the surrounding utilities remain on Tailwind's base `--spacing: 0.25rem` (12px `p-3`, 12px `gap-3`), and redefining it is Severe. Recorded as partial, not claimed. |
-| AC-4 | AA ≥4.5 both themes | **`e2e/contrast.spec.ts`** pixel sampling at the two worst-case spots in both themes, run twice for repeatability ±0.1; **`pnpm check:contrast`** exits 0 on token drift — and is documented as *unable* to answer AC-4 (B8). Plus the 2-spot DevTools reading (§4.4 item 2). |
-| AC-5 | header/footer 100% width | `e2e/shell.spec.ts`: `header.getBoundingClientRect().width === innerWidth` at 375 and 1440; main container `maxWidth` ∈ {768, 1024} |
-| **AC-6** | Header = exactly 3 **visual** elements | `e2e/shell.spec.ts`: `header [data-header-item]` length === **3**, asserted in **both collapsed and expanded search states**. Iteration 1 counted focusable elements while AC-6 says 视觉元素 and the brand is not focusable (`family-app.tsx:283-290`) — it could only ever match 2, and it would have "passed" only by an unrelated coincidence. |
-| AC-7 | No data action in Header | `e2e/shell.spec.ts`: `header` contains no 导出/导入/设置/清空 text; all four present in `footer` |
-| **AC-8** | Search + filter unified | `e2e/search.spec.ts`: `[data-search-root]` contains exactly one `input` and `≥3 [data-filter-chip]`. Iteration 1's "≥3 chips are descendants of that input's wrapper" was an unbound-selector class of defect — same as AC-6's. |
-| AC-9 | Grouped by relation distance | `e2e/search.spec.ts`: group headers in order 祖辈/父辈/同辈/子辈/孙辈/未连接; an isolated fixture person is under 未连接; `test/family.derive.test.ts` for the BFS itself |
-| AC-10 | No persisted generation | `test/family.sanitize.test.ts`: `Object.keys(createEmptyState())` deep-equals `["version","persons","parents","spouses","meId"]`; `e2e/key-hygiene.spec.ts`: exact localStorage key set after a full pass; `grep -rn "generation:" lib/ components/` → 0 |
-| AC-11 | Selecting a result focuses + scrolls | `e2e/search.spec.ts`: click a result → `#focus-card` `boundingBox` within `[0, innerHeight]` and the breadcrumb name matches |
-| AC-12 | MeCard 6 fields, RelativeCard 3 | `e2e/cards.spec.ts`: **`[data-card]` non-empty first**; then `[data-card=me]` innerText contains 籍贯/户籍/备注/生卒 and `[data-card=relative]` contains name + years only |
-| AC-13 | Equal widths, aligned anchors | `e2e/cards.spec.ts`: all `offsetWidth` in a grid row equal; each `.connector` centre within **1px** of its column centre across a 2-generation fixture at 375/768/1024/1440 |
-| AC-14 | 56px / 36px avatars, fallback | `e2e/cards.spec.ts`: `offsetWidth` = 56 for the 我 avatar, 36 for relatives; with no `photoUrl`, the element renders `person.name[0]` |
-| AC-15 | Sheet form at 1024px, width monotonic | `e2e/sheet.spec.ts` at 375/1023/1025/1440, **plus `offsetWidth@768 ≤ offsetWidth@1440`** (the P5 edge) |
-| AC-16 | No clipping; scrolls | `e2e/sheet.spec.ts`: with a 12-event person, the scroll container `scrollHeight > clientHeight`; 保存 still clickable. `min-h-0` is at the three call sites (`:384` owned by Step 4, `:961` by 7d, `:1190` by 7j), not in `sheet.tsx` |
-| **AC-17** | **Bug fixed** | `e2e/bug-spouse-backfill.spec.ts` → **`AC-17: 先加子女后加配偶，子女设为「我」后另一位亲长可见`**; plus `test/family.links.test.ts` case 2 (from seeded raw JSON) and case 5a (the evaluation point) |
+| AC-4 | AA ≥4.5 both themes | **`pnpm check:contrast`** exits 0 on token drift — and is documented as *unable* to answer AC-4 (B8). **人工验证 H1**（DevTools 对比度检查器，两点均 ≥ 4.5:1）为 AC-4 唯一真实证据。 |
+| AC-5 | header/footer 100% width | **人工验证 H3**（目测 header/footer 100% 宽度）; `test/shell.test.ts` 结构验证 |
+| **AC-6** | Header = exactly 3 **visual** elements | `test/shell.test.ts`: `header [data-header-item]` length === **3** |
+| AC-7 | No data action in Header | `test/shell.test.ts`: `header` contains no 导出/导入/设置/清空 text; all four present in `footer` |
+| **AC-8** | Search + filter unified | `test/search.test.ts`: `[data-search-root]` contains exactly one `input` and `≥3 [data-filter-chip]` |
+| AC-9 | Grouped by relation distance | `test/search.test.ts`: group headers in order 祖辈/父辈/同辈/子辈/孙辈/未连接; `test/family.derive.test.ts` for the BFS itself |
+| AC-10 | No persisted generation | `test/family.sanitize.test.ts`: `Object.keys(createEmptyState())` deep-equals `["version","persons","parents","spouses","meId"]`; `test/key-hygiene.test.ts`: exact localStorage key set; `grep -rn "generation:" lib/ components/` → 0 |
+| AC-11 | Selecting a result focuses + scrolls | `test/search.test.ts`: click a result → breadcrumb name matches; 滚动验证为人工 |
+| AC-12 | MeCard 6 fields, RelativeCard 3 | `test/cards.test.ts`: **`[data-card]` non-empty first**; then `[data-card=me]` innerText contains 籍贯/户籍/备注/生卒 and `[data-card=relative]` contains name + years only |
+| AC-13 | Equal widths, aligned anchors | **人工验证 H3**（目测连线居中）; `test/cards.test.ts` 结构验证 |
+| AC-14 | 56px / 36px avatars, fallback | `test/cards.test.ts`: with no `photoUrl`, the element renders `person.name[0]` |
+| AC-15 | Sheet form at 1024px, width monotonic | `test/sheet.test.ts`: `data-side="bottom"` at 375 / `data-side="center"` at 1025; **人工验证 H4** |
+| AC-16 | No clipping; scrolls | `test/sheet.test.ts`: `min-h-0` is at the three call sites (`:384` owned by Step 4, `:961` by 7d, `:1190` by 7j), not in `sheet.tsx` |
+| **AC-17** | **Bug fixed** | `test/bug-spouse-backfill.test.ts` → **`AC-17: 先加子女后加配偶，子女设为「我」后另一位亲长可见`**; plus `test/family.links.test.ts` case 2 (from seeded raw JSON) and case 5a (the evaluation point) |
 | AC-18 | Symmetric writes | `test/family.links.test.ts` case 1 (invariant over ~12 fixtures); **`grep -rn "parents: {" components/ hooks/` → 0 hits** (from 2) |
 | AC-19 | `removeSpouseLink` semantics defined + tested | `test/family.links.test.ts` case 8 asserts parent links **survive**; the rule is written in `CLAUDE.md` |
-| AC-20 | Multi-spouse defined, not silent | `test/family.links.test.ts` case 6 asserts `ambiguous.length === 1` and **no** parent bound; `test/family.repair.test.ts` case 11 asserts the ambiguity is surfaced; `e2e/ambiguous-picker.spec.ts` asserts the picker appears and 暂不指定 writes nothing |
+| AC-20 | Multi-spouse defined, not silent | `test/family.links.test.ts` case 6 asserts `ambiguous.length === 1` and **no** parent bound; `test/family.repair.test.ts` case 11 asserts the ambiguity is surfaced; `test/ambiguous-picker.test.ts` asserts the picker appears and 暂不指定 writes nothing |
 | AC-21 | `photoUrl` + `events` exist | `test/family.sanitize.test.ts` cases 1-4; `grep -c 'photoUrl' lib/family/normalize.ts` ≥ 2 **and** `grep -rn 'photoUrl' lib/family/ \| grep -v -e types.ts -e normalize.ts` = 0 |
 | AC-22 | Non-canonical dates tolerated | `test/family.sanitize.test.ts` case 5: `"约1950"`, `"?"`, `"1949-"` round-trip byte-identical; `grep -c 'inputMode="numeric"' components/sheets/person-edit-sheet.tsx` = **0** |
 | AC-23 | Migration policy honoured | `test/family.sanitize.test.ts` case 6 (raw current-format v1 loads without loss); `grep -n 'STORAGE_KEY' lib/family/types.ts` = `"laotagong:family:v1"` unchanged; the "why no key bump" reasoning is in `CLAUDE.md` |
 | AC-24 | CLAUDE.md complete | `wc -l CLAUDE.md` ∈ [120, 180]; contains all required sections (`grep -c` for 项目定位/命令/文件地图/数据不变量/易踩的坑/设计约定 = 6) and the P4 backfill exception clause |
 | AC-25 | .gitignore additions | `grep -c '\.omc/\|\.remember/\|\.vercel/\|\*\.log' .gitignore` ≥ 4 |
 | AC-26 | `.nojekyll` not ignored | `git check-ignore -v public/.nojekyll` → exit **1**; `git ls-files public/.nojekyll` → prints the path |
-| AC-27 | README updated | `grep -c '照片\|家族事件\|Apple Style\|Liquid Glass' README.md` ≥ 4; `grep -c 'playwright install' README.md` ≥ 1 |
-| AC-28 | Photo URL input → immediate update | `e2e/photo.spec.ts`: enter an absolute URL → the avatar's `<img src>` matches within one paint |
-| AC-29 | Failed load → graceful fallback | `e2e/photo.spec.ts`: 404 origin → **no `<img>` remains**, initial-letter fallback rendered |
-| AC-30 | Events CRUD in the sheet | `e2e/events.spec.ts`: add → appears; edit → text changes; delete → removed |
-| **AC-31** | Events absent from card faces | `e2e/events.spec.ts`: **`await expect(page.locator('[data-card]')).not.toHaveCount(0)`** then assert no `[data-card]` innerText contains event text. Iteration 1's identical-looking check passed **vacuously on an empty NodeList** because no step created the attribute (B9). |
-| AC-32 | No horizontal scroll at 375px | `e2e/shell.spec.ts`: `documentElement.scrollWidth <= clientWidth` at 375×667 on every route state (empty / tree / search open / sheet open) |
-| AC-33 | Build + no 404 at the project path | `NEXT_PUBLIC_BASE_PATH=/laotagong pnpm build` exit 0; `e2e/basepath.spec.ts` asserts every response `< 400` |
-| AC-34 | Both themes render | `pnpm test` (`test/theme.test.ts`) + `e2e/theme.spec.ts` screenshot pass in light and dark |
+| AC-27 | README updated | `grep -c '照片\|家族事件\|Apple Style\|Liquid Glass' README.md` ≥ 4 |
+| AC-28 | Photo URL input → immediate update | `test/photo.test.ts`: enter an absolute URL → the avatar's `<img src>` matches |
+| AC-29 | Failed load → graceful fallback | `test/photo.test.ts`: 404 origin → **no `<img>` remains**, initial-letter fallback rendered |
+| AC-30 | Events CRUD in the sheet | `test/events.test.ts`: add → appears; edit → text changes; delete → removed |
+| **AC-31** | Events absent from card faces | `test/events.test.ts`: **`[data-card]` non-empty first** then assert no `[data-card]` innerText contains event text. Iteration 1's identical-looking check passed **vacuously on an empty NodeList** because no step created the attribute (B9). |
+| AC-32 | No horizontal scroll at 375px | **人工验证 H3**（目测无横向滚动条）; `test/shell.test.ts` 结构验证 |
+| AC-33 | Build + no 404 at the project path | `NEXT_PUBLIC_BASE_PATH=/laotagong pnpm build` exit 0; **人工验证 H6** |
+| AC-34 | Both themes render | `pnpm test` (`test/theme.test.ts`) + **人工验证 H5** |
 
 **Full gate before declaring done** (this is also, line for line, what `.github/workflows/deploy.yml` now runs — B2):
 ```bash
 cd /d/XiaomiMiMoProjects/laotagong
 pnpm install --frozen-lockfile                                     # proves the lockfile was written once and is stable
 pnpm build                                                         # AC-33
-pnpm test                                                          # unit + integration
+pnpm test                                                          # unit + integration (jsdom)
 pnpm check:contrast                                                # token-drift guard (NOT the AC-4 answer)
-pnpm e2e                                                           # AC-2,4,5..17,20,28..34
-NEXT_PUBLIC_BASE_PATH=/laotagong pnpm build && pnpm e2e            # AC-33 under project-site prefix
+NEXT_PUBLIC_BASE_PATH=/laotagong pnpm build                        # AC-33 under project-site prefix
 git diff --stat main..HEAD -- app/globals.css                      # AC-1: glass block untouched
 git diff --stat main..HEAD -- .github/workflows/deploy.yml         # Driver 3: the gates actually run in CI
 ```
+**人工验证清单**（§4.3.2 H1–H6）由用户在真实浏览器中执行并记录结果。
 
 **Effort honesty.** Phase A (Steps 0-2) is the highest-value and lowest-risk third. Phase B (Steps 3, 3b, 4, 5) is shared-surface work that must be serial, and 3+3b are one landing. Step 6 is mechanical but **cannot be parallelised** and must not be attempted concurrently. Phase D (Step 7) is the largest block by wall-clock and is the only genuinely parallelisable phase — **as a 3-layer DAG, not as a flat fan-out**. Phase E is small and independent.
 
