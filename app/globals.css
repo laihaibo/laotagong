@@ -1,4 +1,40 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+/* 让 `dark:` 变体跟随自研主题（lib/theme.ts 在 documentElement 上挂 .dark） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ─────────────────────────────────────────────────────────────
+   Tailwind 语义层
+   `inline` 是必需的：这些值引用 :root/.dark 下运行时切换的变量，
+   不 inline 会按声明处解析，主题翻转时静默不生效。
+   命名空间重置（--text-*: initial）必须排在自定义档位**之前**，
+   否则会把下面 5 级字阶一并清空。
+   ⚠️ 绝不重定义基础的 `--spacing`：那会重新缩放全库所有的 padding、gap 与 max-width 工具类。
+   ───────────────────────────────────────────────────────────── */
+@theme inline {
+  --text-*: initial;
+  --text-display: clamp(1.75rem, 1.5rem + 1.2vw, 2.125rem);
+  --text-title: 1.375rem;
+  --text-subtitle: 1.0625rem;
+  --text-body: 0.9375rem;
+  --text-caption: 0.8125rem;
+
+  --color-background: var(--bg-0);
+  --color-foreground: var(--ink);
+  --color-muted-foreground: var(--ink-soft);
+  --color-faint-foreground: var(--ink-faint);
+  --color-primary: var(--accent);
+  --color-destructive: var(--danger);
+  --color-border: var(--glass-edge);
+  --color-ring: var(--me-ring);
+
+  --radius-card: 1.75rem;
+
+  --spacing-card: 1rem;
+  --spacing-section: 2rem;
+  --spacing-gutter: 1.25rem;
+}
 
 /* ── Design tokens ── */
 :root {
@@ -17,8 +53,11 @@
     #dce5f2 100%
   );
   --ink: #0f172a;
-  --ink-soft: rgba(15, 23, 42, 0.62);
-  --ink-faint: rgba(15, 23, 42, 0.42);
+  /* 次级/三级文字：玻璃卡片背后有彩色光球透出，会在最不透明端抬亮背景。
+     原先的 .62/.42 经实测算不到 AA（深色下 --ink-soft 只有 4.07:1），
+     这两档上调后留出余量。详见 e2e 对比度验收（人工 H1）。 */
+  --ink-soft: rgba(15, 23, 42, 0.74);
+  --ink-faint: rgba(15, 23, 42, 0.66);
   --accent: #0284c7;
   --accent-soft: rgba(2, 132, 199, 0.12);
   --accent-2: #7c3aed;
@@ -49,8 +88,10 @@
     #070b14 100%
   );
   --ink: #f1f5f9;
-  --ink-soft: rgba(241, 245, 249, 0.62);
-  --ink-faint: rgba(241, 245, 249, 0.4);
+  /* 深色下两级灰色必须相互收敛：青色光球透出后背景反而更亮，AA 不留余地。
+     层级表达因此交给字阶与字重，而不是靠拉开灰色差距。 */
+  --ink-soft: rgba(241, 245, 249, 0.78);
+  --ink-faint: rgba(241, 245, 249, 0.72);
   --accent: #38bdf8;
   --accent-soft: rgba(56, 189, 248, 0.14);
   --accent-2: #c4b5fd;
@@ -393,3 +434,5 @@ select option {
 .hover-glass:hover {
   background: var(--glass-strong);
 }
+
+.theme-probe{color:red}

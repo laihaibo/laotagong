@@ -146,15 +146,15 @@
       "type": "file"
     },
     {
-      "path": "package.json",
-      "accessCount": 9,
-      "lastAccessed": 1789116882966,
+      "path": "app/globals.css",
+      "accessCount": 12,
+      "lastAccessed": 1789118098504,
       "type": "file"
     },
     {
-      "path": "app/globals.css",
-      "accessCount": 7,
-      "lastAccessed": 1789114923251,
+      "path": "package.json",
+      "accessCount": 9,
+      "lastAccessed": 1789116882966,
       "type": "file"
     },
     {

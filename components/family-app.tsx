@@ -268,7 +268,7 @@ export function FamilyApp() {
       <div className="flex min-h-dvh items-center justify-center">
         <div className="glass-card rounded-3xl px-8 py-6 text-center">
           <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-2 border-[var(--glass-edge)] border-t-[var(--accent)]" />
-          <p className="text-sm text-[var(--ink-soft)]">载入中…</p>
+          <p className="text-body text-[var(--ink-soft)]">载入中…</p>
         </div>
       </div>
     );
@@ -281,10 +281,10 @@ export function FamilyApp() {
       {/* Header */}
       <header className="mb-5 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)] sm:text-2xl">
+          <h1 className="text-display font-semibold tracking-tight text-[var(--ink)] sm:text-display">
             老太公
           </h1>
-          <p className="truncate text-xs text-[var(--ink-faint)] sm:text-sm">
+          <p className="truncate text-caption text-[var(--ink-faint)] sm:text-body">
             以「我」为中心的家族图谱
           </p>
         </div>
@@ -303,7 +303,7 @@ export function FamilyApp() {
 
       {focus && (
         <div className="mb-4 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1 text-xs text-[var(--ink-soft)]">
+          <div className="flex min-w-0 items-center gap-1 text-caption text-[var(--ink-soft)]">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -318,7 +318,7 @@ export function FamilyApp() {
               {state.persons[focus]?.name}
             </span>
             {meId === focus && (
-              <span className="ml-1 shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--accent)]">
+              <span className="ml-1 shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-caption text-[var(--accent)]">
                 我
               </span>
             )}
@@ -350,7 +350,7 @@ export function FamilyApp() {
         />
       ) : !focus ? (
         <div className="glass-card flex flex-1 flex-col items-center justify-center rounded-3xl p-8 text-center">
-          <p className="mb-4 text-sm text-[var(--ink-soft)]">未指定「我」</p>
+          <p className="mb-4 text-body text-[var(--ink-soft)]">未指定「我」</p>
           <Button onClick={() => setFocusId(firstPersonId(state))}>
             选择一个人物
           </Button>
@@ -394,7 +394,7 @@ export function FamilyApp() {
                       type="button"
                       onClick={() => changeTheme(m)}
                       className={cn(
-                        "flex h-12 flex-col items-center justify-center gap-1 rounded-2xl text-xs transition-all",
+                        "flex h-12 flex-col items-center justify-center gap-1 rounded-2xl text-caption transition-all",
                         active
                           ? "glass-btn text-[var(--ink)]"
                           : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
@@ -412,7 +412,7 @@ export function FamilyApp() {
               <CollapsibleTrigger asChild>
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium text-[var(--ink)]"
+                  className="flex w-full items-center justify-between px-4 py-3 text-left text-body font-medium text-[var(--ink)]"
                 >
                   <span className="flex items-center gap-2">
                     <Trash2 className="h-4 w-4 text-[var(--danger)]" />
@@ -422,7 +422,7 @@ export function FamilyApp() {
                 </button>
               </CollapsibleTrigger>
               <CollapsibleContent className="border-t border-[var(--glass-edge)] px-4 py-3">
-                <p className="mb-3 text-xs leading-relaxed text-[var(--ink-faint)]">
+                <p className="mb-3 text-caption leading-relaxed text-[var(--ink-faint)]">
                   导入会覆盖当前数据；清空不可恢复。建议先导出备份。
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row">
@@ -454,7 +454,7 @@ export function FamilyApp() {
               </CollapsibleContent>
             </Collapsible>
 
-            <p className="text-center text-[11px] text-[var(--ink-faint)]">
+            <p className="text-center text-caption text-[var(--ink-faint)]">
               {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机
             </p>
           </div>
@@ -503,7 +503,7 @@ export function FamilyApp() {
 
       {toast && (
         <div className="pointer-events-none fixed inset-x-0 bottom-24 z-[60] flex justify-center px-4">
-          <div className="glass rounded-full px-4 py-2 text-sm text-[var(--ink)] shadow-lg">
+          <div className="glass rounded-full px-4 py-2 text-body text-[var(--ink)] shadow-lg">
             {toast}
           </div>
         </div>
@@ -557,10 +557,10 @@ function EmptyState({
         <div className="glass mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl">
           <Users className="h-7 w-7 text-[var(--accent)]" />
         </div>
-        <h2 className="text-xl font-semibold text-[var(--ink)]">
+        <h2 className="text-title font-semibold text-[var(--ink)]">
           建立你的家族图谱
         </h2>
-        <p className="mt-1.5 text-sm leading-relaxed text-[var(--ink-soft)]">
+        <p className="mt-1.5 text-body leading-relaxed text-[var(--ink-soft)]">
           先从「我」开始，再向上添加父母，
           <br />
           向下延伸子女，横向连接配偶。
@@ -614,7 +614,7 @@ function GenderPicker({
             type="button"
             onClick={() => onChange(v)}
             className={cn(
-              "h-10 rounded-2xl text-sm transition-all",
+              "h-10 rounded-2xl text-body transition-all",
               value === v
                 ? "glass-btn text-[var(--ink)]"
                 : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
@@ -777,7 +777,7 @@ function TreeSection({
             className="empty-slot flex min-h-[128px] flex-col items-center justify-center gap-1.5 rounded-3xl"
           >
             <Plus className="h-5 w-5" />
-            <span className="text-xs">添加子女</span>
+            <span className="text-caption">添加子女</span>
           </button>
         </div>
       </section>
@@ -788,7 +788,7 @@ function TreeSection({
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="mb-2 flex items-center gap-2">
-      <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ink-faint)]">
+      <span className="text-caption font-medium uppercase tracking-[0.14em] text-[var(--ink-faint)]">
         {children}
       </span>
       <div className="h-px flex-1 bg-[var(--glass-edge)]" />
@@ -827,7 +827,7 @@ function PersonCard({
         className="empty-slot flex min-h-[132px] w-full flex-col items-center justify-center gap-2 rounded-3xl"
       >
         <Plus className="h-5 w-5" />
-        <span className="text-xs">{roleLabel ? `添加${roleLabel}` : "添加"}</span>
+        <span className="text-caption">{roleLabel ? `添加${roleLabel}` : "添加"}</span>
       </button>
     );
   }
@@ -857,7 +857,7 @@ function PersonCard({
           <div
             className={cn(
               "avatar-ring flex shrink-0 items-center justify-center rounded-2xl font-semibold text-white",
-              compact ? "h-9 w-9 text-xs" : "h-11 w-11 text-sm",
+              compact ? "h-9 w-9 text-caption" : "h-11 w-11 text-body",
               person.gender === "male" && "avatar-male",
               person.gender === "female" && "avatar-female",
               person.gender === "unknown" && "avatar-unknown",
@@ -868,25 +868,25 @@ function PersonCard({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1">
-              <p className="truncate text-[15px] font-semibold leading-tight text-[var(--ink)]">
+              <p className="truncate text-body font-semibold leading-tight text-[var(--ink)]">
                 {person.name}
               </p>
               {isMe && (
-                <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
+                <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-caption font-medium text-[var(--accent)]">
                   我
                 </span>
               )}
               {roleLabel && roleLabel !== "我" && !isMe && (
-                <span className="shrink-0 rounded-full bg-[var(--glass-strong)] px-1.5 py-0.5 text-[10px] text-[var(--ink-soft)]">
+                <span className="shrink-0 rounded-full bg-[var(--glass-strong)] px-1.5 py-0.5 text-caption text-[var(--ink-soft)]">
                   {roleLabel}
                 </span>
               )}
             </div>
             {years && (
-              <p className="mt-0.5 text-[11px] text-[var(--ink-faint)]">{years}</p>
+              <p className="mt-0.5 text-caption text-[var(--ink-faint)]">{years}</p>
             )}
             {(person.ancestralHome || person.household) && (
-              <p className="mt-1 truncate text-[11px] text-[var(--ink-soft)]">
+              <p className="mt-1 truncate text-caption text-[var(--ink-soft)]">
                 {person.ancestralHome && (
                   <span className="mr-1.5">籍 {person.ancestralHome}</span>
                 )}
@@ -950,7 +950,7 @@ function PersonEditSheet({
           <SheetTitle className="flex items-center gap-2">
             编辑人物
             {isMe && (
-              <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent)]">
+              <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-caption font-medium text-[var(--accent)]">
                 我
               </span>
             )}
@@ -1175,7 +1175,7 @@ function AddRelationSheet({
               type="button"
               onClick={() => setTab(v)}
               className={cn(
-                "rounded-xl py-2 text-sm transition-all",
+                "rounded-xl py-2 text-body transition-all",
                 tab === v
                   ? "glass-btn text-[var(--ink)]"
                   : "text-[var(--ink-soft)] hover:text-[var(--ink)]"
@@ -1200,7 +1200,7 @@ function AddRelationSheet({
             </div>
             <GenderPicker value={gender} onChange={setGender} />
             {mode === "child" && (
-              <p className="text-xs text-[var(--ink-faint)]">
+              <p className="text-caption text-[var(--ink-faint)]">
                 若当前人物有配偶，将自动关联为双亲。
               </p>
             )}
@@ -1225,7 +1225,7 @@ function AddRelationSheet({
             />
             <div className="flex-1 space-y-2 overflow-y-auto pb-2">
               {candidates.length === 0 ? (
-                <p className="py-8 text-center text-sm text-[var(--ink-faint)]">
+                <p className="py-8 text-center text-body text-[var(--ink-faint)]">
                   暂无可关联人物
                 </p>
               ) : (
@@ -1243,7 +1243,7 @@ function AddRelationSheet({
                   >
                     <div
                       className={cn(
-                        "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-semibold text-white",
+                        "flex h-10 w-10 items-center justify-center rounded-xl text-body font-semibold text-white",
                         p.gender === "male" && "avatar-male",
                         p.gender === "female" && "avatar-female",
                         p.gender === "unknown" && "avatar-unknown"
@@ -1252,10 +1252,10 @@ function AddRelationSheet({
                       {p.name.slice(0, 1)}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-[var(--ink)]">
+                      <p className="truncate text-body font-medium text-[var(--ink)]">
                         {p.name}
                       </p>
-                      <p className="truncate text-[11px] text-[var(--ink-soft)]">
+                      <p className="truncate text-caption text-[var(--ink-soft)]">
                         {[
                           p.ancestralHome && `籍 ${p.ancestralHome}`,
                           p.household && `户 ${p.household}`,
