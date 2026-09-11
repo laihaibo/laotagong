@@ -565,3 +565,142 @@ export function groupByRelationDistance(state: FamilyState): DistanceGroup[] {
   return [...groups.filter((g) => g.ids.length > 0), unconnected];
 }
 
+
+// ─────────────────────────────────────────────────────────────
+// 生肖（由生年推导，不落库）
+// ─────────────────────────────────────────────────────────────
+
+const ZODIAC = [
+  "鼠", "牛", "虎", "兔", "龙", "蛇",
+  "马", "羊", "猴", "鸡", "狗", "猪",
+] as const;
+
+export interface ZodiacResult {
+  label: string;
+  /** 生年写法不规范（「约1950」「?」），结果仅供参考 */
+  approx: boolean;
+}
+
+/** 公元 4 年为鼠年，故 (year - 4) mod 12 即生肖序号 */
+export function zodiacOf(birthYear?: string): ZodiacResult | null {
+  if (!birthYear) return null;
+  const match = birthYear.match(/\d{4}/);
+  if (!match) return null;
+  const year = Number(match[0]);
+  if (!Number.isFinite(year)) return null;
+  const index = (((year - 4) % 12) + 12) % 12;
+  return { label: ZODIAC[index], approx: !/^\d{4}$/.test(birthYear.trim()) };
+}
+
+// ─────────────────────────────────────────────────────────────
+// 五服（由血缘关系推导，不落库）
+// ─────────────────────────────────────────────────────────────
+
+export type WufuGrade = "斩衰" | "齐衰" | "大功" | "小功" | "缌麻" | "出服";
+
+export interface WufuResult {
+  grade: WufuGrade;
+  months: string;
+  /** 推导依据，展示给用户看，避免「凭什么给我算这个」 */
+  basis: string;
+}
+
+/** 严格按 `标准` 推定会失真：这是**简化**的本宗五服对照，不区分长子/众子、
+ *  不区分父在母在、不处理过继与出继。族谱应用够用，礼制考据不够。 */
+function directUp(gen: number): WufuResult {
+  if (gen === 1) return { grade: "斩衰", months: "三年", basis: "父母" };
+  if (gen === 2) return { grade: "齐衰", months: "一年", basis: "祖父母" };
+  if (gen === 3) return { grade: "齐衰", months: "三月", basis: "曾祖父母" };
+  if (gen === 4) return { grade: "缌麻", months: "三月", basis: "高祖父母" };
+  return { grade: "出服", months: "—", basis: `上溯 ${gen} 代，已出五服` };
+}
+
+function directDown(gen: number): WufuResult {
+  if (gen === 1) return { grade: "斩衰", months: "三年", basis: "子女" };
+  if (gen === 2) return { grade: "大功", months: "九月", basis: "孙" };
+  if (gen === 3) return { grade: "缌麻", months: "三月", basis: "曾孙" };
+  return { grade: "出服", months: "—", basis: `下延 ${gen} 代，已出五服` };
+}
+
+function collateral(gen: number): WufuResult {
+  if (gen === 1) return { grade: "齐衰", months: "一年", basis: "同父 — 兄弟姐妹" };
+  if (gen === 2) return { grade: "大功", months: "九月", basis: "同祖 — 堂兄弟姐妹" };
+  if (gen === 3) return { grade: "小功", months: "五月", basis: "同曾祖 — 从兄弟姐妹" };
+  if (gen === 4) return { grade: "缌麻", months: "三月", basis: "同高祖 — 族兄弟姐妹" };
+  return { grade: "出服", months: "—", basis: `共同祖先上溯 ${gen} 代，已出五服` };
+}
+
+/** id 到其各位祖先的代数（0 = 本人），最多上溯 maxDepth 代 */
+function ancestorLevels(
+  state: FamilyState,
+  id: string,
+  maxDepth = 6
+): Map<string, number> {
+  const levels = new Map<string, number>([[id, 0]]);
+  let frontier: string[] = [id];
+  for (let depth = 1; depth <= maxDepth; depth += 1) {
+    const next: string[] = [];
+    for (const current of frontier) {
+      const entry = state.parents[current];
+      for (const parentId of [entry?.fatherId, entry?.motherId]) {
+        if (parentId && state.persons[parentId] && !levels.has(parentId)) {
+          levels.set(parentId, depth);
+          next.push(parentId);
+        }
+      }
+    }
+    if (next.length === 0) break;
+    frontier = next;
+  }
+  return levels;
+}
+
+/**
+ * 计算 personId 相对于「我」的五服。
+ *
+ * 旁系按「到共同祖先的代数」定服：同父→齐衰、同祖→大功、同曾祖→小功、
+ * 同高祖→缌麻，再远即出服。这正是「本宗九族」的经典算法。
+ *
+ * 姻亲（配偶及其血亲）不在本宗五服之内，单独标注。
+ */
+export function wufuOf(
+  state: FamilyState,
+  personId: string
+): WufuResult | null {
+  const meId = state.meId;
+  if (!meId || !state.persons[meId] || !state.persons[personId]) return null;
+  if (meId === personId) return null;
+
+  if (getSpouseIds(state, meId).includes(personId)) {
+    return { grade: "齐衰", months: "本宗之外", basis: "配偶（服制与本宗血亲不同）" };
+  }
+
+  const myAncestors = ancestorLevels(state, meId);
+  const hisAncestors = ancestorLevels(state, personId);
+
+  // 直系尊亲属
+  const up = myAncestors.get(personId);
+  if (up !== undefined) return directUp(up);
+
+  // 直系卑亲属
+  const down = hisAncestors.get(meId);
+  if (down !== undefined) return directDown(down);
+
+  // 旁系：取「到共同祖先代数之和」最小的那位共同祖先
+  let bestTotal = Number.POSITIVE_INFINITY;
+  let bestGen = 0;
+  for (const [ancestorId, myUp] of myAncestors) {
+    const hisUp = hisAncestors.get(ancestorId);
+    if (hisUp === undefined) continue;
+    const total = myUp + hisUp;
+    if (total < bestTotal) {
+      bestTotal = total;
+      bestGen = Math.max(myUp, hisUp);
+    }
+  }
+
+  if (!Number.isFinite(bestTotal)) {
+    return { grade: "出服", months: "—", basis: "无共同祖先（姻亲或未连通）" };
+  }
+  return collateral(bestGen);
+}

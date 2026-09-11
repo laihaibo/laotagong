@@ -6,11 +6,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Crown,
+  Database,
   Download,
   Home,
   Monitor,
   Moon,
-  Pencil,
   Plus,
   Search,
   Sun,
@@ -37,7 +37,10 @@ import {
   type Gender,
   type Person,
   type RelationKind,
+  type WufuResult,
   EVENT_TYPES,
+  wufuOf,
+  zodiacOf,
   addParentLink,
   addSpouseLink,
   areSpouses,
@@ -74,6 +77,52 @@ const THEME_META: Record<ThemeMode, { label: string; icon: typeof Sun }> = {
   system: { label: "跟随系统", icon: Monitor },
 };
 
+/**
+ * 应用标识：一位先祖，向下延出两支。
+ * 用 CSS 变量取色，因此浅色/深色主题下自动跟随。
+ * （与 app/icon.svg 同构，那份是 favicon，不能用 var()。）
+ */
+function AppMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      className={className}
+      role="img"
+      aria-label="老太公"
+      fill="none"
+    >
+      <defs>
+        <linearGradient id="appmark-lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="var(--accent)" />
+          <stop offset="100%" stopColor="var(--accent-2)" />
+        </linearGradient>
+      </defs>
+      <rect
+        x="2.75"
+        y="2.75"
+        width="58.5"
+        height="58.5"
+        rx="15"
+        stroke="url(#appmark-lg)"
+        strokeOpacity="0.28"
+        strokeWidth="2.5"
+      />
+      <g
+        stroke="url(#appmark-lg)"
+        strokeWidth="4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M32 23.5 V32" />
+        <path d="M18.5 39.5 V32 H45.5 V39.5" />
+      </g>
+      <circle cx="32" cy="17" r="7" fill="url(#appmark-lg)" />
+      <circle cx="18.5" cy="45.5" r="6" fill="url(#appmark-lg)" opacity="0.72" />
+      <circle cx="45.5" cy="45.5" r="6" fill="url(#appmark-lg)" opacity="0.72" />
+    </svg>
+  );
+}
+
 export function FamilyApp() {
   const [state, setState] = useState<FamilyState>(() => createEmptyState());
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -82,6 +131,7 @@ export function FamilyApp() {
   const [addMode, setAddMode] = useState<AddMode>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [dataOpen, setDataOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -267,48 +317,38 @@ export function FamilyApp() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      {/* Header — 100% 宽度，通栏。
-          只放三件事：品牌 / 查找 / 主题。数据操作一律下沉到 footer。 */}
+      {/* Header — 100% 宽度，通栏。品牌 / 查找 / 数据 / 主题，各占一个图标。 */}
       <header className="sticky top-0 z-40 w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--bg-0)]/75 backdrop-blur-2xl">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="min-w-0" data-header-item>
-            <h1 className="text-display font-semibold tracking-tight text-[var(--ink)]">
+          <div className="flex min-w-0 items-center gap-2.5" data-header-item>
+            <AppMark className="h-8 w-8 shrink-0 sm:h-9 sm:w-9" />
+            <h1 className="truncate text-display font-semibold tracking-tight text-[var(--ink)]">
               老太公
             </h1>
-            <p className="truncate text-caption text-[var(--ink-faint)]">
-              以「我」为中心的家族图谱
-            </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <Button
               variant="ghost"
               size="icon-sm"
               data-header-item
-              onClick={() => setSearchOpen((v) => !v)}
+              onClick={() => setSearchOpen(true)}
               title="查找"
-              aria-expanded={searchOpen}
             >
-              {searchOpen ? (
-                <X className="h-4 w-4" />
-              ) : (
-                <Search className="h-4 w-4" />
-              )}
+              <Search className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-header-item
+              onClick={() => setDataOpen(true)}
+              title="数据管理"
+            >
+              <Database className="h-4 w-4" />
             </Button>
             <ThemeCycleButton mode={themeMode} onChange={changeTheme} />
           </div>
         </div>
       </header>
-
-      {/* SearchPanel 挂在 header 之外 —— 展开它不能改变 header 的元素数目 */}
-      {searchOpen && (
-        <SearchPanel
-          state={state}
-          onSelect={(id) => {
-            setFocusId(id);
-            setSearchOpen(false);
-          }}
-        />
-      )}
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-6 pt-5 sm:px-6 lg:max-w-5xl lg:px-8">
 
@@ -388,30 +428,66 @@ export function FamilyApp() {
 
       {/* Footer — 100% 宽度。数据输入输出与危险操作都在这里，header 保持干净。 */}
       <footer className="w-full shrink-0 border-t border-[var(--glass-edge)] bg-[var(--bg-0)]/60 backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-1.5">
-            <Button variant="ghost" size="sm" onClick={exportJson}>
+        <div className="mx-auto w-full max-w-5xl px-4 py-3 text-center sm:px-6 lg:px-8">
+          <p className="text-caption text-[var(--ink-faint)]">2026 laiha</p>
+        </div>
+      </footer>
+
+      {/* 查找弹窗 */}
+      <Sheet open={searchOpen} onOpenChange={setSearchOpen}>
+        <SheetContent side="responsive">
+          <SheetHeader>
+            <SheetTitle>查找</SheetTitle>
+            <SheetDescription>搜索姓名、籍贯或户籍，或按条件筛选</SheetDescription>
+          </SheetHeader>
+          <SearchPanel
+            state={state}
+            onSelect={(id) => {
+              setFocusId(id);
+              setSearchOpen(false);
+            }}
+          />
+        </SheetContent>
+      </Sheet>
+
+      {/* 数据管理弹窗 */}
+      <Sheet open={dataOpen} onOpenChange={setDataOpen}>
+        <SheetContent side="responsive">
+          <SheetHeader>
+            <SheetTitle>数据管理</SheetTitle>
+            <SheetDescription>导出备份、导入恢复，或清空全部数据</SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              onClick={exportJson}
+            >
               <Download className="h-4 w-4" />
-              <span className="hidden sm:inline">导出</span>
+              导出 JSON
             </Button>
             <Button
-              variant="ghost"
-              size="sm"
+              variant="outline"
+              className="w-full justify-start"
               onClick={() => fileRef.current?.click()}
             >
               <Upload className="h-4 w-4" />
-              <span className="hidden sm:inline">导入</span>
+              导入 JSON
             </Button>
-            <Button variant="ghost" size="sm" onClick={resetAll}>
-              <Trash2 className="h-4 w-4 text-[var(--danger)]" />
-              <span className="hidden sm:inline">清空</span>
+            <Button
+              variant="danger"
+              className="w-full justify-start"
+              onClick={resetAll}
+            >
+              <Trash2 className="h-4 w-4" />
+              清空数据
             </Button>
+            <p className="pt-2 text-caption text-[var(--ink-faint)]">
+              共 {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机浏览器
+            </p>
           </div>
-          <p className="text-caption text-[var(--ink-faint)]">
-            {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机
-          </p>
-        </div>
-      </footer>
+        </SheetContent>
+      </Sheet>
 
       <input
         ref={fileRef}
@@ -429,12 +505,18 @@ export function FamilyApp() {
         open={!!editingId}
         person={editingId ? state.persons[editingId] : null}
         isMe={editingId === meId}
+        isFocus={editingId === focus}
+        wufu={editingId ? wufuOf(state, editingId) : null}
         onOpenChange={(open) => {
           if (!open) setEditingId(null);
         }}
         onSave={upsertPerson}
         onDelete={deletePerson}
         onSetMe={setAsMe}
+        onRecenter={(id) => {
+          setFocusId(id);
+          setEditingId(null);
+        }}
       />
 
       <AddRelationSheet
@@ -827,7 +909,7 @@ function TreeSection({
             roleLabel={meId === focusId ? "我" : undefined}
             isMe={meId === focusId}
             highlighted
-            onFocus={() => onFocus(focusId)}
+            wufu={wufuOf(state, focusId)}
             onEdit={() => onEdit(focusId)}
             onSetMe={meId !== focusId ? () => onSetMe(focusId) : undefined}
           />
@@ -947,8 +1029,8 @@ function PersonCard({
   roleLabel,
   isMe,
   highlighted,
+  wufu,
   onEmpty,
-  onFocus,
   onEdit,
   onSetMe,
 }: {
@@ -956,6 +1038,8 @@ function PersonCard({
   roleLabel?: string;
   isMe?: boolean;
   highlighted?: boolean;
+  /** 相对「我」的五服；锚点卡片才展示 */
+  wufu?: WufuResult | null;
   onEmpty?: () => void;
   onFocus?: () => void;
   onEdit?: () => void;
@@ -1001,11 +1085,13 @@ function PersonCard({
         highlighted && "focused"
       )}
     >
+      {/* 点击卡片 = 看详情，不再重定心。重定心是显式动作，放在详情面板里，
+          免得「看一眼」被误当成「切换『我』」。 */}
       <button
         type="button"
-        onClick={onFocus}
+        onClick={onEdit}
         className="block w-full text-left"
-        aria-label={`查看 ${person.name} 的家庭`}
+        aria-label={`查看 ${person.name} 的详细信息`}
       >
         <div className={cn("flex items-start", anchor ? "gap-3.5" : "gap-2.5")}>
           <Avatar person={person} size={anchor ? "lg" : "sm"} />
@@ -1038,6 +1124,25 @@ function PersonCard({
                 )}
               >
                 {years}
+                {(() => {
+                  const z = zodiacOf(person.birthYear);
+                  return z ? <span className="ml-1.5">属{z.label}</span> : null;
+                })()}
+              </p>
+            )}
+
+            {/* 五服：锚点卡片且不是「我」本人时展示 */}
+            {anchor && wufu && (
+              <p className="mt-1 text-caption">
+                <span
+                  className="rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[var(--accent)]"
+                  title={wufu.basis}
+                >
+                  {wufu.grade}
+                </span>
+                <span className="ml-1.5 text-[var(--ink-faint)]">
+                  {wufu.months}
+                </span>
               </p>
             )}
 
@@ -1061,18 +1166,14 @@ function PersonCard({
         </div>
       </button>
 
-      <div className="mt-2.5 flex items-center justify-end gap-1 opacity-80">
-        {onSetMe && (
-          <Button variant="ghost" size="icon-sm" onClick={onSetMe} title="设为我">
+      {/* 只有皇冠是动作按钮。卡片本身已经能打开详情，铅笔是冗余的。 */}
+      {onSetMe && (
+        <div className="mt-2.5 flex items-center justify-end gap-1 opacity-80">
+          <Button variant="ghost" size="icon-sm" onClick={onSetMe} title="设为「我」">
             <Crown className="h-3.5 w-3.5" />
           </Button>
-        )}
-        {onEdit && (
-          <Button variant="ghost" size="icon-sm" onClick={onEdit} title="编辑">
-            <Pencil className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1207,18 +1308,24 @@ function PersonEditSheet({
   open,
   person,
   isMe,
+  isFocus,
+  wufu,
   onOpenChange,
   onSave,
   onDelete,
   onSetMe,
+  onRecenter,
 }: {
   open: boolean;
   person: Person | null;
   isMe: boolean;
+  isFocus: boolean;
+  wufu: WufuResult | null;
   onOpenChange: (open: boolean) => void;
   onSave: (p: Person) => void;
   onDelete: (id: string) => void;
   onSetMe: (id: string) => void;
+  onRecenter: (id: string) => void;
 }) {
   const [draft, setDraft] = useState<Person | null>(null);
 
@@ -1244,6 +1351,33 @@ function PersonEditSheet({
             )}
           </SheetTitle>
           <SheetDescription>完善姓名、生卒、籍贯与户籍信息</SheetDescription>
+
+          {/* 推导出来的信息集中放在这里：都不是存储字段，改生年/关系后自动重算 */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            {(() => {
+              const z = zodiacOf(draft.birthYear);
+              return z ? (
+                <span className="rounded-full bg-[var(--glass-strong)] px-2 py-0.5 text-caption text-[var(--ink-soft)]">
+                  属{z.label}
+                  {z.approx && <span className="text-[var(--ink-faint)]">（推）</span>}
+                </span>
+              ) : null;
+            })()}
+            {wufu && (
+              <span
+                className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-caption text-[var(--accent)]"
+                title={`${wufu.basis} · 服期 ${wufu.months}`}
+              >
+                {wufu.grade}
+              </span>
+            )}
+          </div>
+          {wufu && (
+            <p className="pt-1 text-caption leading-relaxed text-[var(--ink-faint)]">
+              五服：<span className="text-[var(--ink-soft)]">{wufu.grade}</span>
+              （{wufu.months}） · {wufu.basis}
+            </p>
+          )}
         </SheetHeader>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
@@ -1350,6 +1484,17 @@ function PersonEditSheet({
               >
                 <UserCheck className="h-4 w-4" />
                 设为我
+              </Button>
+            )}
+            {/* 卡片点击不再重定心（免得被误当成切换「我」），所以这里显式给一个 */}
+            {!isFocus && (
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => onRecenter(draft.id)}
+              >
+                <Home className="h-4 w-4" />
+                以此人为中心
               </Button>
             )}
             <Button
