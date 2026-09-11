@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Crown,
@@ -12,17 +11,17 @@ import {
   Moon,
   Pencil,
   Plus,
-  Settings2,
+  Search,
   Sun,
   Trash2,
   Upload,
   UserCheck,
   Users,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Sheet,
   SheetContent,
@@ -45,6 +44,7 @@ import {
   getMotherId,
   getSiblingIds,
   getSpouseIds,
+  groupByRelationDistance,
   importState,
   linkChildWithParents,
   loadState,
@@ -76,7 +76,7 @@ export function FamilyApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addMode, setAddMode] = useState<AddMode>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -277,29 +277,51 @@ export function FamilyApp() {
   const isEmpty = Object.keys(state.persons).length === 0;
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col px-4 pb-8 pt-5 sm:px-6 lg:max-w-5xl lg:px-8">
-      {/* Header */}
-      <header className="mb-5 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-display font-semibold tracking-tight text-[var(--ink)] sm:text-display">
-            老太公
-          </h1>
-          <p className="truncate text-caption text-[var(--ink-faint)] sm:text-body">
-            以「我」为中心的家族图谱
-          </p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <ThemeCycleButton mode={themeMode} onChange={changeTheme} />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setSettingsOpen(true)}
-            title="设置"
-          >
-            <Settings2 className="h-4 w-4" />
-          </Button>
+    <div className="flex min-h-dvh flex-col">
+      {/* Header — 100% 宽度，通栏。
+          只放三件事：品牌 / 查找 / 主题。数据操作一律下沉到 footer。 */}
+      <header className="sticky top-0 z-40 w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--bg-0)]/75 backdrop-blur-2xl">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="min-w-0" data-header-item>
+            <h1 className="text-display font-semibold tracking-tight text-[var(--ink)]">
+              老太公
+            </h1>
+            <p className="truncate text-caption text-[var(--ink-faint)]">
+              以「我」为中心的家族图谱
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-header-item
+              onClick={() => setSearchOpen((v) => !v)}
+              title="查找"
+              aria-expanded={searchOpen}
+            >
+              {searchOpen ? (
+                <X className="h-4 w-4" />
+              ) : (
+                <Search className="h-4 w-4" />
+              )}
+            </Button>
+            <ThemeCycleButton mode={themeMode} onChange={changeTheme} />
+          </div>
         </div>
       </header>
+
+      {/* SearchPanel 挂在 header 之外 —— 展开它不能改变 header 的元素数目 */}
+      {searchOpen && (
+        <SearchPanel
+          state={state}
+          onSelect={(id) => {
+            setFocusId(id);
+            setSearchOpen(false);
+          }}
+        />
+      )}
+
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-6 pt-5 sm:px-6 lg:max-w-5xl lg:px-8">
 
       {focus && (
         <div className="mb-4 flex items-center justify-between gap-2">
@@ -373,93 +395,34 @@ export function FamilyApp() {
         />
       )}
 
-      {/* Settings sheet */}
-      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <SheetContent side="bottom">
-          <SheetHeader>
-            <SheetTitle>设置</SheetTitle>
-            <SheetDescription>主题与数据管理</SheetDescription>
-          </SheetHeader>
+      </main>
 
-          <div className="flex-1 space-y-4 overflow-y-auto pb-2">
-            <div className="space-y-2">
-              <Label>主题</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {(Object.keys(THEME_META) as ThemeMode[]).map((m) => {
-                  const Icon = THEME_META[m].icon;
-                  const active = themeMode === m;
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => changeTheme(m)}
-                      className={cn(
-                        "flex h-12 flex-col items-center justify-center gap-1 rounded-2xl text-caption transition-all",
-                        active
-                          ? "glass-btn text-[var(--ink)]"
-                          : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {THEME_META[m].label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <Collapsible className="rounded-2xl border border-[var(--glass-border)] bg-[var(--glass)]">
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between px-4 py-3 text-left text-body font-medium text-[var(--ink)]"
-                >
-                  <span className="flex items-center gap-2">
-                    <Trash2 className="h-4 w-4 text-[var(--danger)]" />
-                    数据管理（谨慎操作）
-                  </span>
-                  <ChevronDown className="h-4 w-4 text-[var(--ink-faint)] transition-transform [[data-state=open]_&]:rotate-180" />
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="border-t border-[var(--glass-edge)] px-4 py-3">
-                <p className="mb-3 text-caption leading-relaxed text-[var(--ink-faint)]">
-                  导入会覆盖当前数据；清空不可恢复。建议先导出备份。
-                </p>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={exportJson}
-                  >
-                    <Download className="h-4 w-4" />
-                    导出 JSON
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => fileRef.current?.click()}
-                  >
-                    <Upload className="h-4 w-4" />
-                    导入 JSON
-                  </Button>
-                  <Button
-                    variant="danger"
-                    className="flex-1"
-                    onClick={resetAll}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    清空数据
-                  </Button>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-
-            <p className="text-center text-caption text-[var(--ink-faint)]">
-              {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机
-            </p>
+      {/* Footer — 100% 宽度。数据输入输出与危险操作都在这里，header 保持干净。 */}
+      <footer className="w-full shrink-0 border-t border-[var(--glass-edge)] bg-[var(--bg-0)]/60 backdrop-blur-xl">
+        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="sm" onClick={exportJson}>
+              <Download className="h-4 w-4" />
+              <span className="hidden sm:inline">导出</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload className="h-4 w-4" />
+              <span className="hidden sm:inline">导入</span>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={resetAll}>
+              <Trash2 className="h-4 w-4 text-[var(--danger)]" />
+              <span className="hidden sm:inline">清空</span>
+            </Button>
           </div>
-        </SheetContent>
-      </Sheet>
+          <p className="text-caption text-[var(--ink-faint)]">
+            {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机
+          </p>
+        </div>
+      </footer>
 
       <input
         ref={fileRef}
@@ -526,11 +489,168 @@ function ThemeCycleButton({
     <Button
       variant="ghost"
       size="icon-sm"
+      data-header-item
       onClick={() => onChange(next)}
       title={`主题：${THEME_META[mode].label}`}
     >
       <Icon className="h-4 w-4" />
     </Button>
+  );
+}
+
+/* ───────── Search Panel ───────── */
+
+const SEARCH_FILTERS: Array<{ key: string; label: string }> = [
+  { key: "male", label: "男" },
+  { key: "female", label: "女" },
+  { key: "alive", label: "在世" },
+  { key: "dead", label: "已故" },
+];
+
+/**
+ * 搜索与筛选合成一个面板（AC-8）。
+ * 结果按「以我为原点」的关系距离分组；同辈一桶同时含配偶与兄弟姐妹（配偶权重为 0）。
+ */
+function SearchPanel({
+  state,
+  onSelect,
+}: {
+  state: FamilyState;
+  onSelect: (id: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState<string[]>([]);
+
+  const groups = useMemo(() => groupByRelationDistance(state), [state]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const match = (p: Person): boolean => {
+      if (q) {
+        const hay = [p.name, p.ancestralHome, p.household]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (filters.length === 0) return true;
+      return filters.some((f) => {
+        if (f === "male") return p.gender === "male";
+        if (f === "female") return p.gender === "female";
+        if (f === "alive") return !p.deathYear;
+        if (f === "dead") return !!p.deathYear;
+        return true;
+      });
+    };
+    return groups
+      .map((g) => ({
+        ...g,
+        ids: g.ids.filter((id) => {
+          const p = state.persons[id];
+          return p ? match(p) : false;
+        }),
+      }))
+      .filter((g) => g.ids.length > 0);
+  }, [groups, query, filters, state.persons]);
+
+  const total = visible.reduce((n, g) => n + g.ids.length, 0);
+
+  const toggle = (key: string) =>
+    setFilters((f) =>
+      f.includes(key) ? f.filter((x) => x !== key) : [...f, key]
+    );
+
+  return (
+    <div
+      data-search-root
+      className="w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--bg-0)]/60 backdrop-blur-xl"
+    >
+      <div className="mx-auto w-full max-w-5xl px-4 py-3 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-2 rounded-2xl border border-[var(--glass-border)] bg-[var(--glass)] px-3 py-2">
+          <Search className="h-4 w-4 shrink-0 text-[var(--ink-faint)]" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索姓名 / 籍贯 / 户籍"
+            className="w-full bg-transparent text-body text-[var(--ink)] outline-none placeholder:text-[var(--ink-faint)]"
+          />
+          <span className="shrink-0 text-caption text-[var(--ink-faint)]">
+            {total}
+          </span>
+        </div>
+
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {SEARCH_FILTERS.map((f) => {
+            const active = filters.includes(f.key);
+            return (
+              <button
+                key={f.key}
+                type="button"
+                data-filter-chip
+                onClick={() => toggle(f.key)}
+                className={cn(
+                  "rounded-full px-3 py-1 text-caption transition-colors",
+                  active
+                    ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                    : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
+                )}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 max-h-[50dvh] overflow-y-auto">
+          {visible.length === 0 ? (
+            <p className="py-6 text-center text-caption text-[var(--ink-faint)]">
+              没有匹配的成员
+            </p>
+          ) : (
+            visible.map((g) => (
+              <section key={g.key} className="mb-3 last:mb-0">
+                <h2 className="mb-1.5 text-caption font-medium text-[var(--ink-faint)]">
+                  {g.label} · {g.ids.length}
+                </h2>
+                <ul className="space-y-1">
+                  {g.ids.map((id) => {
+                    const p = state.persons[id];
+                    if (!p) return null;
+                    const detail = [p.birthYear, p.ancestralHome]
+                      .filter(Boolean)
+                      .join(" · ");
+                    return (
+                      <li key={id}>
+                        <button
+                          type="button"
+                          onClick={() => onSelect(id)}
+                          className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-[var(--glass-strong)]"
+                        >
+                          <span className="truncate text-body text-[var(--ink)]">
+                            {p.name}
+                          </span>
+                          {state.meId === id && (
+                            <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-caption text-[var(--accent)]">
+                              我
+                            </span>
+                          )}
+                          {detail && (
+                            <span className="ml-auto shrink-0 text-caption text-[var(--ink-faint)]">
+                              {detail}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

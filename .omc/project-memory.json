@@ -135,8 +135,8 @@
   "hotPaths": [
     {
       "path": "components/family-app.tsx",
-      "accessCount": 12,
-      "lastAccessed": 1789114873902,
+      "accessCount": 24,
+      "lastAccessed": 1789118292215,
       "type": "file"
     },
     {
