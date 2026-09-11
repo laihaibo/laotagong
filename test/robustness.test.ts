@@ -25,7 +25,7 @@ describe("newId · 非安全上下文也要能用", () => {
   it("crypto.randomUUID 不存在时不抛异常，仍产出 id", () => {
     const original = crypto.randomUUID;
     // 模拟 http + 局域网 IP 的场景：randomUUID 不存在
-    // @ts-expect-error 故意删除以复现非安全上下文
+    // 故意删除以复现非安全上下文（TS 允许删可选属性，不需要抑制指令）
     delete (crypto as { randomUUID?: unknown }).randomUUID;
     try {
       expect(() => newId()).not.toThrow();
