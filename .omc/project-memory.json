@@ -254,6 +254,18 @@
       "type": "file"
     },
     {
+      "path": "README.md",
+      "accessCount": 2,
+      "lastAccessed": 1789118644461,
+      "type": "file"
+    },
+    {
+      "path": "scripts/check-contrast.mjs",
+      "accessCount": 2,
+      "lastAccessed": 1789118664760,
+      "type": "file"
+    },
+    {
       "path": "lib/utils.ts",
       "accessCount": 1,
       "lastAccessed": 1789110392906,
@@ -263,12 +275,6 @@
       "path": "components/ui/collapsible.tsx",
       "accessCount": 1,
       "lastAccessed": 1789110399973,
-      "type": "file"
-    },
-    {
-      "path": "README.md",
-      "accessCount": 1,
-      "lastAccessed": 1789110412547,
       "type": "file"
     },
     {
@@ -317,6 +323,12 @@
       "path": "test/family.sanitize.test.ts",
       "accessCount": 1,
       "lastAccessed": 1789118461672,
+      "type": "file"
+    },
+    {
+      "path": "CLAUDE.md",
+      "accessCount": 1,
+      "lastAccessed": 1789118632589,
       "type": "file"
     }
   ],
