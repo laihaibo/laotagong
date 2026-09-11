@@ -805,7 +805,6 @@ function TreeSection({
                 key={sid}
                 person={state.persons[sid]}
                 isMe={sid === meId}
-                compact
                 onFocus={() => onFocus(sid)}
                 onEdit={() => onEdit(sid)}
                 onSetMe={sid !== meId ? () => onSetMe(sid) : undefined}
@@ -903,12 +902,47 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 /* ───────── Person Card ───────── */
 
+/** 头像：有 photoUrl 时显示照片，加载失败或无链接时回退到「姓名首字 + 性别渐变」 */
+function Avatar({
+  person,
+  size,
+}: {
+  person: Person;
+  size: "lg" | "sm";
+}) {
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const showPhoto = !!person.photoUrl && !photoFailed;
+
+  return (
+    <div
+      className={cn(
+        "avatar-ring relative flex shrink-0 items-center justify-center overflow-hidden rounded-2xl font-semibold text-white",
+        size === "lg" ? "h-14 w-14 text-subtitle" : "h-9 w-9 text-caption",
+        person.gender === "male" && "avatar-male",
+        person.gender === "female" && "avatar-female",
+        person.gender === "unknown" && "avatar-unknown"
+      )}
+    >
+      {/* 首字始终在 DOM 里：照片加载失败时它就在下层，不会出现破图 */}
+      <span aria-hidden={showPhoto}>{person.name.slice(0, 1)}</span>
+      {showPhoto && (
+        // eslint-disable-next-line @next/next/no-img-element -- 外置链接，不走 next/image
+        <img
+          src={person.photoUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={() => setPhotoFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
 function PersonCard({
   person,
   roleLabel,
   isMe,
   highlighted,
-  compact,
   onEmpty,
   onFocus,
   onEdit,
@@ -918,7 +952,6 @@ function PersonCard({
   roleLabel?: string;
   isMe?: boolean;
   highlighted?: boolean;
-  compact?: boolean;
   onEmpty?: () => void;
   onFocus?: () => void;
   onEdit?: () => void;
@@ -929,7 +962,7 @@ function PersonCard({
       <button
         type="button"
         onClick={onEmpty}
-        className="empty-slot flex min-h-[132px] w-full flex-col items-center justify-center gap-2 rounded-3xl"
+        className="empty-slot flex min-h-[104px] w-full flex-col items-center justify-center gap-2 rounded-3xl"
       >
         <Plus className="h-5 w-5" />
         <span className="text-caption">{roleLabel ? `添加${roleLabel}` : "添加"}</span>
@@ -937,19 +970,31 @@ function PersonCard({
     );
   }
 
-  const initial = person.name.slice(0, 1);
+  // 锚点卡片（当前浏览的人）显示全部字段；亲属卡片只留姓名 + 生卒年 + 头像。
+  // 高度差来自信息量，宽度两者都是 w-full —— 尺寸差是结果，不是手段。
+  const anchor = !!highlighted;
   const years =
     person.birthYear || person.deathYear
       ? `${person.birthYear || "?"}–${person.deathYear || ""}`
       : "";
+  const place =
+    person.ancestralHome || person.household
+      ? [
+          person.ancestralHome && `籍 ${person.ancestralHome}`,
+          person.household && `户 ${person.household}`,
+        ]
+          .filter(Boolean)
+          .join("  ")
+      : "";
 
   return (
     <div
+      data-card={anchor ? "me" : "relative"}
       className={cn(
         "glass-card group relative w-full rounded-3xl transition-transform active:scale-[0.98]",
-        compact ? "p-3" : "p-3.5",
-        isMe && "me",
-        highlighted && !isMe && "focused"
+        anchor ? "p-card" : "p-3",
+        anchor && "me",
+        highlighted && "focused"
       )}
     >
       <button
@@ -958,22 +1003,16 @@ function PersonCard({
         className="block w-full text-left"
         aria-label={`查看 ${person.name} 的家庭`}
       >
-        <div className={cn("flex items-start gap-3", compact && "gap-2.5")}>
-          <div
-            className={cn(
-              "avatar-ring flex shrink-0 items-center justify-center rounded-2xl font-semibold text-white",
-              compact ? "h-9 w-9 text-caption" : "h-11 w-11 text-body",
-              person.gender === "male" && "avatar-male",
-              person.gender === "female" && "avatar-female",
-              person.gender === "unknown" && "avatar-unknown",
-              isMe && "me-pulse"
-            )}
-          >
-            {initial}
-          </div>
+        <div className={cn("flex items-start", anchor ? "gap-3.5" : "gap-2.5")}>
+          <Avatar person={person} size={anchor ? "lg" : "sm"} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1">
-              <p className="truncate text-body font-semibold leading-tight text-[var(--ink)]">
+              <p
+                className={cn(
+                  "truncate font-semibold leading-tight text-[var(--ink)]",
+                  anchor ? "text-subtitle" : "text-body"
+                )}
+              >
                 {person.name}
               </p>
               {isMe && (
@@ -988,14 +1027,30 @@ function PersonCard({
               )}
             </div>
             {years && (
-              <p className="mt-0.5 text-caption text-[var(--ink-faint)]">{years}</p>
-            )}
-            {(person.ancestralHome || person.household) && (
-              <p className="mt-1 truncate text-caption text-[var(--ink-soft)]">
-                {person.ancestralHome && (
-                  <span className="mr-1.5">籍 {person.ancestralHome}</span>
+              <p
+                className={cn(
+                  "mt-0.5 text-caption",
+                  anchor ? "text-[var(--ink-soft)]" : "text-[var(--ink-faint)]"
                 )}
-                {person.household && <span>户 {person.household}</span>}
+              >
+                {years}
+              </p>
+            )}
+
+            {/* 以下三块只属于锚点卡片 */}
+            {anchor && place && (
+              <p className="mt-1.5 truncate text-caption text-[var(--ink-soft)]">
+                {place}
+              </p>
+            )}
+            {anchor && person.note && (
+              <p className="mt-1.5 line-clamp-2 text-caption leading-relaxed text-[var(--ink-faint)]">
+                {person.note}
+              </p>
+            )}
+            {anchor && (person.events?.length ?? 0) > 0 && (
+              <p className="mt-1.5 text-caption text-[var(--ink-faint)]">
+                {person.events?.length} 条家族事件
               </p>
             )}
           </div>

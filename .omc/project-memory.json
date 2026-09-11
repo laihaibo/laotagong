@@ -135,14 +135,14 @@
   "hotPaths": [
     {
       "path": "components/family-app.tsx",
-      "accessCount": 27,
-      "lastAccessed": 1789118383703,
+      "accessCount": 29,
+      "lastAccessed": 1789118507483,
       "type": "file"
     },
     {
       "path": "lib/family.ts",
-      "accessCount": 12,
-      "lastAccessed": 1789117408366,
+      "accessCount": 15,
+      "lastAccessed": 1789118450474,
       "type": "file"
     },
     {
@@ -311,6 +311,12 @@
       "path": "test/fixtures/orphan.json",
       "accessCount": 1,
       "lastAccessed": 1789117069459,
+      "type": "file"
+    },
+    {
+      "path": "test/family.sanitize.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1789118461672,
       "type": "file"
     }
   ],

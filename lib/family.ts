@@ -2,6 +2,26 @@ export type Gender = "male" | "female" | "unknown";
 
 export type RelationKind = "father" | "mother" | "spouse" | "child";
 
+export const EVENT_TYPES = [
+  "marriage",
+  "migration",
+  "birth",
+  "death",
+  "education",
+  "custom",
+] as const;
+
+export type EventType = (typeof EVENT_TYPES)[number];
+
+export interface FamilyEvent {
+  id: string;
+  type: EventType;
+  /** 容忍非规范写法："约1950"、"?"、"1949-" */
+  date: string;
+  place?: string;
+  note?: string;
+}
+
 export interface Person {
   id: string;
   name: string;
@@ -11,6 +31,9 @@ export interface Person {
   ancestralHome?: string;
   household?: string;
   note?: string;
+  /** 外置图片链接；不用 base64，避免撞 localStorage 配额 */
+  photoUrl?: string;
+  events?: FamilyEvent[];
   createdAt: number;
   updatedAt: number;
 }
@@ -37,20 +60,58 @@ export function createEmptyState(): FamilyState {
   };
 }
 
-export function createPerson(partial: Partial<Person> = {}): Person {
+/**
+ * Person 的**唯一**字段清单。
+ *
+ * createPerson 与 sanitizeState 都必须经过它——分成两份清单是 P-1 的根因：
+ * 写路径认识新字段、读路径不认识，于是 saveState 写进去、loadState 又丢掉，
+ * 而构建与测试全绿，没有任何信号。
+ */
+export function normalizeEvent(raw: unknown): FamilyEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  const type: EventType = EVENT_TYPES.includes(e.type as EventType)
+    ? (e.type as EventType)
+    : "custom";
+  return {
+    id: typeof e.id === "string" && e.id ? e.id : crypto.randomUUID(),
+    type,
+    date: typeof e.date === "string" ? e.date : "",
+    place: typeof e.place === "string" ? e.place : "",
+    note: typeof e.note === "string" ? e.note : "",
+  };
+}
+
+export function normalizePerson(id: string, raw: unknown): Person {
+  const p = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const now = Date.now();
   return {
-    id: partial.id ?? crypto.randomUUID(),
-    name: partial.name ?? "未命名",
-    gender: partial.gender ?? "unknown",
-    birthYear: partial.birthYear ?? "",
-    deathYear: partial.deathYear ?? "",
-    ancestralHome: partial.ancestralHome ?? "",
-    household: partial.household ?? "",
-    note: partial.note ?? "",
-    createdAt: partial.createdAt ?? now,
-    updatedAt: now,
+    id,
+    name: typeof p.name === "string" ? p.name : "未命名",
+    gender:
+      p.gender === "male" || p.gender === "female" || p.gender === "unknown"
+        ? p.gender
+        : "unknown",
+    birthYear: typeof p.birthYear === "string" ? p.birthYear : "",
+    deathYear: typeof p.deathYear === "string" ? p.deathYear : "",
+    ancestralHome: typeof p.ancestralHome === "string" ? p.ancestralHome : "",
+    household: typeof p.household === "string" ? p.household : "",
+    note: typeof p.note === "string" ? p.note : "",
+    photoUrl: typeof p.photoUrl === "string" ? p.photoUrl : "",
+    events: Array.isArray(p.events)
+      ? p.events
+          .map(normalizeEvent)
+          .filter((e): e is FamilyEvent => e !== null)
+      : [],
+    createdAt: typeof p.createdAt === "number" ? p.createdAt : now,
+    updatedAt: typeof p.updatedAt === "number" ? p.updatedAt : now,
   };
+}
+
+export function createPerson(partial: Partial<Person> = {}): Person {
+  const now = Date.now();
+  const base = normalizePerson(partial.id ?? crypto.randomUUID(), partial);
+  return { ...base, createdAt: partial.createdAt ?? now, updatedAt: now };
 }
 
 export function getFatherId(state: FamilyState, personId: string): string | null {
@@ -255,23 +316,10 @@ export function sanitizeState(raw: unknown): FamilyState {
 
   const persons: Record<string, Person> = {};
   if (obj.persons && typeof obj.persons === "object") {
-    for (const [id, p] of Object.entries(obj.persons as Record<string, Person>)) {
+    for (const [id, p] of Object.entries(obj.persons as Record<string, unknown>)) {
       if (!p || typeof p !== "object") continue;
-      persons[id] = {
-        id,
-        name: typeof p.name === "string" ? p.name : "未命名",
-        gender:
-          p.gender === "male" || p.gender === "female" || p.gender === "unknown"
-            ? p.gender
-            : "unknown",
-        birthYear: typeof p.birthYear === "string" ? p.birthYear : "",
-        deathYear: typeof p.deathYear === "string" ? p.deathYear : "",
-        ancestralHome: typeof p.ancestralHome === "string" ? p.ancestralHome : "",
-        household: typeof p.household === "string" ? p.household : "",
-        note: typeof p.note === "string" ? p.note : "",
-        createdAt: typeof p.createdAt === "number" ? p.createdAt : Date.now(),
-        updatedAt: typeof p.updatedAt === "number" ? p.updatedAt : Date.now(),
-      };
+      // 与 createPerson 共用同一份字段清单（P3）——两处分开维护就是 P-1 的根因
+      persons[id] = normalizePerson(id, p);
     }
   }
 
