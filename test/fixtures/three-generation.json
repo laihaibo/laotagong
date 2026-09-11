@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "persons": {
+    "G": {
+      "id": "G",
+      "name": "太公",
+      "gender": "male",
+      "birthYear": "1910",
+      "deathYear": "1985",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    },
+    "A": {
+      "id": "A",
+      "name": "爷爷",
+      "gender": "male",
+      "birthYear": "1940",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    },
+    "B": {
+      "id": "B",
+      "name": "奶奶",
+      "gender": "female",
+      "birthYear": "1945",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    },
+    "C": {
+      "id": "C",
+      "name": "爸爸",
+      "gender": "male",
+      "birthYear": "1970",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    },
+    "D": {
+      "id": "D",
+      "name": "我",
+      "gender": "male",
+      "birthYear": "2000",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    }
+  },
+  "parents": {
+    "A": { "fatherId": "G" },
+    "C": { "fatherId": "A", "motherId": "B" },
+    "D": { "fatherId": "C" }
+  },
+  "spouses": [
+    { "a": "A", "b": "B" }
+  ],
+  "meId": "D"
+}

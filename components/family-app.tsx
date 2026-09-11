@@ -6,23 +6,23 @@ import {
   ChevronLeft,
   ChevronRight,
   Crown,
+  Database,
   Download,
   Home,
   Monitor,
   Moon,
-  Pencil,
   Plus,
-  Settings2,
+  Search,
   Sun,
   Trash2,
   Upload,
   UserCheck,
   Users,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Sheet,
   SheetContent,
@@ -31,10 +31,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
+  type EventType,
+  type FamilyEvent,
   type FamilyState,
   type Gender,
   type Person,
   type RelationKind,
+  type WufuResult,
+  EVENT_TYPES,
+  wufuOf,
+  zodiacOf,
+  addParentLink,
   addSpouseLink,
   areSpouses,
   createEmptyState,
@@ -45,6 +52,7 @@ import {
   getMotherId,
   getSiblingIds,
   getSpouseIds,
+  groupByRelationDistance,
   importState,
   linkChildWithParents,
   loadState,
@@ -69,6 +77,52 @@ const THEME_META: Record<ThemeMode, { label: string; icon: typeof Sun }> = {
   system: { label: "跟随系统", icon: Monitor },
 };
 
+/**
+ * 应用标识：一位先祖，向下延出两支。
+ * 用 CSS 变量取色，因此浅色/深色主题下自动跟随。
+ * （与 app/icon.svg 同构，那份是 favicon，不能用 var()。）
+ */
+function AppMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      className={className}
+      role="img"
+      aria-label="老太公"
+      fill="none"
+    >
+      <defs>
+        <linearGradient id="appmark-lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="var(--accent)" />
+          <stop offset="100%" stopColor="var(--accent-2)" />
+        </linearGradient>
+      </defs>
+      <rect
+        x="2.75"
+        y="2.75"
+        width="58.5"
+        height="58.5"
+        rx="15"
+        stroke="url(#appmark-lg)"
+        strokeOpacity="0.28"
+        strokeWidth="2.5"
+      />
+      <g
+        stroke="url(#appmark-lg)"
+        strokeWidth="4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M32 23.5 V32" />
+        <path d="M18.5 39.5 V32 H45.5 V39.5" />
+      </g>
+      <circle cx="32" cy="17" r="7" fill="url(#appmark-lg)" />
+      <circle cx="18.5" cy="45.5" r="6" fill="url(#appmark-lg)" opacity="0.72" />
+      <circle cx="45.5" cy="45.5" r="6" fill="url(#appmark-lg)" opacity="0.72" />
+    </svg>
+  );
+}
+
 export function FamilyApp() {
   const [state, setState] = useState<FamilyState>(() => createEmptyState());
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -76,7 +130,8 @@ export function FamilyApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addMode, setAddMode] = useState<AddMode>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [dataOpen, setDataOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -157,16 +212,9 @@ export function FamilyApp() {
           persons: { ...s.persons, [person.id]: person },
         };
         if (mode === "father" || mode === "mother") {
-          next = {
-            ...next,
-            parents: {
-              ...next.parents,
-              [focus]: {
-                ...next.parents[focus],
-                [mode === "father" ? "fatherId" : "motherId"]: person.id,
-              },
-            },
-          };
+          // `mode` 是用户显式选择的父/母，必须胜过任何按性别推导的角色。
+          // 走 addParentLink（parents 的唯一构造者），不在这里裸写对象。
+          next = addParentLink(next, focus, person.id, mode);
         } else if (mode === "spouse") {
           next = addSpouseLink(next, focus, person.id);
         } else if (mode === "child") {
@@ -194,16 +242,7 @@ export function FamilyApp() {
   const handleLinkExistingAsParent = useCallback(
     (parentId: string, role: "father" | "mother") => {
       if (!focus || parentId === focus) return;
-      setState((s) => ({
-        ...s,
-        parents: {
-          ...s.parents,
-          [focus]: {
-            ...s.parents[focus],
-            [role === "father" ? "fatherId" : "motherId"]: parentId,
-          },
-        },
-      }));
+      setState((s) => addParentLink(s, focus, parentId, role));
       setAddMode(null);
       setToast("已关联");
     },
@@ -268,7 +307,7 @@ export function FamilyApp() {
       <div className="flex min-h-dvh items-center justify-center">
         <div className="glass-card rounded-3xl px-8 py-6 text-center">
           <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-2 border-[var(--glass-edge)] border-t-[var(--accent)]" />
-          <p className="text-sm text-[var(--ink-soft)]">载入中…</p>
+          <p className="text-body text-[var(--ink-soft)]">载入中…</p>
         </div>
       </div>
     );
@@ -277,33 +316,45 @@ export function FamilyApp() {
   const isEmpty = Object.keys(state.persons).length === 0;
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col px-4 pb-8 pt-5 sm:px-6 lg:max-w-5xl lg:px-8">
-      {/* Header */}
-      <header className="mb-5 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--ink)] sm:text-2xl">
-            老太公
-          </h1>
-          <p className="truncate text-xs text-[var(--ink-faint)] sm:text-sm">
-            以「我」为中心的家族图谱
-          </p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <ThemeCycleButton mode={themeMode} onChange={changeTheme} />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setSettingsOpen(true)}
-            title="设置"
-          >
-            <Settings2 className="h-4 w-4" />
-          </Button>
+    <div className="flex min-h-dvh flex-col">
+      {/* Header — 100% 宽度，通栏。品牌 / 查找 / 数据 / 主题，各占一个图标。 */}
+      <header className="sticky top-0 z-40 w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--bg-0)]/75 backdrop-blur-2xl">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2.5" data-header-item>
+            <AppMark className="h-8 w-8 shrink-0 sm:h-9 sm:w-9" />
+            <h1 className="truncate text-display font-semibold tracking-tight text-[var(--ink)]">
+              老太公
+            </h1>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-header-item
+              onClick={() => setSearchOpen(true)}
+              title="查找"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-header-item
+              onClick={() => setDataOpen(true)}
+              title="数据管理"
+            >
+              <Database className="h-4 w-4" />
+            </Button>
+            <ThemeCycleButton mode={themeMode} onChange={changeTheme} />
+          </div>
         </div>
       </header>
 
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-6 pt-5 sm:px-6 lg:max-w-5xl lg:px-8">
+
       {focus && (
         <div className="mb-4 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1 text-xs text-[var(--ink-soft)]">
+          <div className="flex min-w-0 items-center gap-1 text-caption text-[var(--ink-soft)]">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -318,7 +369,7 @@ export function FamilyApp() {
               {state.persons[focus]?.name}
             </span>
             {meId === focus && (
-              <span className="ml-1 shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--accent)]">
+              <span className="ml-1 shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-caption text-[var(--accent)]">
                 我
               </span>
             )}
@@ -350,7 +401,7 @@ export function FamilyApp() {
         />
       ) : !focus ? (
         <div className="glass-card flex flex-1 flex-col items-center justify-center rounded-3xl p-8 text-center">
-          <p className="mb-4 text-sm text-[var(--ink-soft)]">未指定「我」</p>
+          <p className="mb-4 text-body text-[var(--ink-soft)]">未指定「我」</p>
           <Button onClick={() => setFocusId(firstPersonId(state))}>
             选择一个人物
           </Button>
@@ -373,89 +424,66 @@ export function FamilyApp() {
         />
       )}
 
-      {/* Settings sheet */}
-      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <SheetContent side="bottom">
+      </main>
+
+      {/* Footer — 100% 宽度。数据输入输出与危险操作都在这里，header 保持干净。 */}
+      <footer className="w-full shrink-0 border-t border-[var(--glass-edge)] bg-[var(--bg-0)]/60 backdrop-blur-xl">
+        <div className="mx-auto w-full max-w-5xl px-4 py-3 text-center sm:px-6 lg:px-8">
+          <p className="text-caption text-[var(--ink-faint)]">2026 laiha</p>
+        </div>
+      </footer>
+
+      {/* 查找弹窗 */}
+      <Sheet open={searchOpen} onOpenChange={setSearchOpen}>
+        <SheetContent side="responsive">
           <SheetHeader>
-            <SheetTitle>设置</SheetTitle>
-            <SheetDescription>主题与数据管理</SheetDescription>
+            <SheetTitle>查找</SheetTitle>
+            <SheetDescription>搜索姓名、籍贯或户籍，或按条件筛选</SheetDescription>
           </SheetHeader>
+          <SearchPanel
+            state={state}
+            onSelect={(id) => {
+              setFocusId(id);
+              setSearchOpen(false);
+            }}
+          />
+        </SheetContent>
+      </Sheet>
 
-          <div className="flex-1 space-y-4 overflow-y-auto pb-2">
-            <div className="space-y-2">
-              <Label>主题</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {(Object.keys(THEME_META) as ThemeMode[]).map((m) => {
-                  const Icon = THEME_META[m].icon;
-                  const active = themeMode === m;
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => changeTheme(m)}
-                      className={cn(
-                        "flex h-12 flex-col items-center justify-center gap-1 rounded-2xl text-xs transition-all",
-                        active
-                          ? "glass-btn text-[var(--ink)]"
-                          : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {THEME_META[m].label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <Collapsible className="rounded-2xl border border-[var(--glass-border)] bg-[var(--glass)]">
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium text-[var(--ink)]"
-                >
-                  <span className="flex items-center gap-2">
-                    <Trash2 className="h-4 w-4 text-[var(--danger)]" />
-                    数据管理（谨慎操作）
-                  </span>
-                  <ChevronDown className="h-4 w-4 text-[var(--ink-faint)] transition-transform [[data-state=open]_&]:rotate-180" />
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="border-t border-[var(--glass-edge)] px-4 py-3">
-                <p className="mb-3 text-xs leading-relaxed text-[var(--ink-faint)]">
-                  导入会覆盖当前数据；清空不可恢复。建议先导出备份。
-                </p>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={exportJson}
-                  >
-                    <Download className="h-4 w-4" />
-                    导出 JSON
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => fileRef.current?.click()}
-                  >
-                    <Upload className="h-4 w-4" />
-                    导入 JSON
-                  </Button>
-                  <Button
-                    variant="danger"
-                    className="flex-1"
-                    onClick={resetAll}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    清空数据
-                  </Button>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-
-            <p className="text-center text-[11px] text-[var(--ink-faint)]">
-              {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机
+      {/* 数据管理弹窗 */}
+      <Sheet open={dataOpen} onOpenChange={setDataOpen}>
+        <SheetContent side="responsive">
+          <SheetHeader>
+            <SheetTitle>数据管理</SheetTitle>
+            <SheetDescription>导出备份、导入恢复，或清空全部数据</SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              onClick={exportJson}
+            >
+              <Download className="h-4 w-4" />
+              导出 JSON
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload className="h-4 w-4" />
+              导入 JSON
+            </Button>
+            <Button
+              variant="danger"
+              className="w-full justify-start"
+              onClick={resetAll}
+            >
+              <Trash2 className="h-4 w-4" />
+              清空数据
+            </Button>
+            <p className="pt-2 text-caption text-[var(--ink-faint)]">
+              共 {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机浏览器
             </p>
           </div>
         </SheetContent>
@@ -477,12 +505,18 @@ export function FamilyApp() {
         open={!!editingId}
         person={editingId ? state.persons[editingId] : null}
         isMe={editingId === meId}
+        isFocus={editingId === focus}
+        wufu={editingId ? wufuOf(state, editingId) : null}
         onOpenChange={(open) => {
           if (!open) setEditingId(null);
         }}
         onSave={upsertPerson}
         onDelete={deletePerson}
         onSetMe={setAsMe}
+        onRecenter={(id) => {
+          setFocusId(id);
+          setEditingId(null);
+        }}
       />
 
       <AddRelationSheet
@@ -503,7 +537,7 @@ export function FamilyApp() {
 
       {toast && (
         <div className="pointer-events-none fixed inset-x-0 bottom-24 z-[60] flex justify-center px-4">
-          <div className="glass rounded-full px-4 py-2 text-sm text-[var(--ink)] shadow-lg">
+          <div className="glass rounded-full px-4 py-2 text-body text-[var(--ink)] shadow-lg">
             {toast}
           </div>
         </div>
@@ -526,11 +560,168 @@ function ThemeCycleButton({
     <Button
       variant="ghost"
       size="icon-sm"
+      data-header-item
       onClick={() => onChange(next)}
       title={`主题：${THEME_META[mode].label}`}
     >
       <Icon className="h-4 w-4" />
     </Button>
+  );
+}
+
+/* ───────── Search Panel ───────── */
+
+const SEARCH_FILTERS: Array<{ key: string; label: string }> = [
+  { key: "male", label: "男" },
+  { key: "female", label: "女" },
+  { key: "alive", label: "在世" },
+  { key: "dead", label: "已故" },
+];
+
+/**
+ * 搜索与筛选合成一个面板（AC-8）。
+ * 结果按「以我为原点」的关系距离分组；同辈一桶同时含配偶与兄弟姐妹（配偶权重为 0）。
+ */
+function SearchPanel({
+  state,
+  onSelect,
+}: {
+  state: FamilyState;
+  onSelect: (id: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState<string[]>([]);
+
+  const groups = useMemo(() => groupByRelationDistance(state), [state]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const match = (p: Person): boolean => {
+      if (q) {
+        const hay = [p.name, p.ancestralHome, p.household]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (filters.length === 0) return true;
+      return filters.some((f) => {
+        if (f === "male") return p.gender === "male";
+        if (f === "female") return p.gender === "female";
+        if (f === "alive") return !p.deathYear;
+        if (f === "dead") return !!p.deathYear;
+        return true;
+      });
+    };
+    return groups
+      .map((g) => ({
+        ...g,
+        ids: g.ids.filter((id) => {
+          const p = state.persons[id];
+          return p ? match(p) : false;
+        }),
+      }))
+      .filter((g) => g.ids.length > 0);
+  }, [groups, query, filters, state.persons]);
+
+  const total = visible.reduce((n, g) => n + g.ids.length, 0);
+
+  const toggle = (key: string) =>
+    setFilters((f) =>
+      f.includes(key) ? f.filter((x) => x !== key) : [...f, key]
+    );
+
+  return (
+    <div
+      data-search-root
+      className="w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--bg-0)]/60 backdrop-blur-xl"
+    >
+      <div className="mx-auto w-full max-w-5xl px-4 py-3 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-2 rounded-2xl border border-[var(--glass-border)] bg-[var(--glass)] px-3 py-2">
+          <Search className="h-4 w-4 shrink-0 text-[var(--ink-faint)]" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索姓名 / 籍贯 / 户籍"
+            className="w-full bg-transparent text-body text-[var(--ink)] outline-none placeholder:text-[var(--ink-faint)]"
+          />
+          <span className="shrink-0 text-caption text-[var(--ink-faint)]">
+            {total}
+          </span>
+        </div>
+
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {SEARCH_FILTERS.map((f) => {
+            const active = filters.includes(f.key);
+            return (
+              <button
+                key={f.key}
+                type="button"
+                data-filter-chip
+                onClick={() => toggle(f.key)}
+                className={cn(
+                  "rounded-full px-3 py-1 text-caption transition-colors",
+                  active
+                    ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                    : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
+                )}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 max-h-[50dvh] overflow-y-auto">
+          {visible.length === 0 ? (
+            <p className="py-6 text-center text-caption text-[var(--ink-faint)]">
+              没有匹配的成员
+            </p>
+          ) : (
+            visible.map((g) => (
+              <section key={g.key} className="mb-3 last:mb-0">
+                <h2 className="mb-1.5 text-caption font-medium text-[var(--ink-faint)]">
+                  {g.label} · {g.ids.length}
+                </h2>
+                <ul className="space-y-1">
+                  {g.ids.map((id) => {
+                    const p = state.persons[id];
+                    if (!p) return null;
+                    const detail = [p.birthYear, p.ancestralHome]
+                      .filter(Boolean)
+                      .join(" · ");
+                    return (
+                      <li key={id}>
+                        <button
+                          type="button"
+                          onClick={() => onSelect(id)}
+                          className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-[var(--glass-strong)]"
+                        >
+                          <span className="truncate text-body text-[var(--ink)]">
+                            {p.name}
+                          </span>
+                          {state.meId === id && (
+                            <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-caption text-[var(--accent)]">
+                              我
+                            </span>
+                          )}
+                          {detail && (
+                            <span className="ml-auto shrink-0 text-caption text-[var(--ink-faint)]">
+                              {detail}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -557,10 +748,10 @@ function EmptyState({
         <div className="glass mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl">
           <Users className="h-7 w-7 text-[var(--accent)]" />
         </div>
-        <h2 className="text-xl font-semibold text-[var(--ink)]">
+        <h2 className="text-title font-semibold text-[var(--ink)]">
           建立你的家族图谱
         </h2>
-        <p className="mt-1.5 text-sm leading-relaxed text-[var(--ink-soft)]">
+        <p className="mt-1.5 text-body leading-relaxed text-[var(--ink-soft)]">
           先从「我」开始，再向上添加父母，
           <br />
           向下延伸子女，横向连接配偶。
@@ -614,7 +805,7 @@ function GenderPicker({
             type="button"
             onClick={() => onChange(v)}
             className={cn(
-              "h-10 rounded-2xl text-sm transition-all",
+              "h-10 rounded-2xl text-body transition-all",
               value === v
                 ? "glass-btn text-[var(--ink)]"
                 : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
@@ -700,7 +891,6 @@ function TreeSection({
                 key={sid}
                 person={state.persons[sid]}
                 isMe={sid === meId}
-                compact
                 onFocus={() => onFocus(sid)}
                 onEdit={() => onEdit(sid)}
                 onSetMe={sid !== meId ? () => onSetMe(sid) : undefined}
@@ -719,7 +909,7 @@ function TreeSection({
             roleLabel={meId === focusId ? "我" : undefined}
             isMe={meId === focusId}
             highlighted
-            onFocus={() => onFocus(focusId)}
+            wufu={wufuOf(state, focusId)}
             onEdit={() => onEdit(focusId)}
             onSetMe={meId !== focusId ? () => onSetMe(focusId) : undefined}
           />
@@ -777,7 +967,7 @@ function TreeSection({
             className="empty-slot flex min-h-[128px] flex-col items-center justify-center gap-1.5 rounded-3xl"
           >
             <Plus className="h-5 w-5" />
-            <span className="text-xs">添加子女</span>
+            <span className="text-caption">添加子女</span>
           </button>
         </div>
       </section>
@@ -788,7 +978,7 @@ function TreeSection({
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="mb-2 flex items-center gap-2">
-      <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ink-faint)]">
+      <span className="text-caption font-medium uppercase tracking-[0.14em] text-[var(--ink-faint)]">
         {children}
       </span>
       <div className="h-px flex-1 bg-[var(--glass-edge)]" />
@@ -798,14 +988,49 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 /* ───────── Person Card ───────── */
 
+/** 头像：有 photoUrl 时显示照片，加载失败或无链接时回退到「姓名首字 + 性别渐变」 */
+function Avatar({
+  person,
+  size,
+}: {
+  person: Person;
+  size: "lg" | "sm";
+}) {
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const showPhoto = !!person.photoUrl && !photoFailed;
+
+  return (
+    <div
+      className={cn(
+        "avatar-ring relative flex shrink-0 items-center justify-center overflow-hidden rounded-2xl font-semibold text-white",
+        size === "lg" ? "h-14 w-14 text-subtitle" : "h-9 w-9 text-caption",
+        person.gender === "male" && "avatar-male",
+        person.gender === "female" && "avatar-female",
+        person.gender === "unknown" && "avatar-unknown"
+      )}
+    >
+      {/* 首字始终在 DOM 里：照片加载失败时它就在下层，不会出现破图 */}
+      <span aria-hidden={showPhoto}>{person.name.slice(0, 1)}</span>
+      {showPhoto && (
+        // eslint-disable-next-line @next/next/no-img-element -- 外置链接，不走 next/image
+        <img
+          src={person.photoUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={() => setPhotoFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
 function PersonCard({
   person,
   roleLabel,
   isMe,
   highlighted,
-  compact,
+  wufu,
   onEmpty,
-  onFocus,
   onEdit,
   onSetMe,
 }: {
@@ -813,7 +1038,8 @@ function PersonCard({
   roleLabel?: string;
   isMe?: boolean;
   highlighted?: boolean;
-  compact?: boolean;
+  /** 相对「我」的五服；锚点卡片才展示 */
+  wufu?: WufuResult | null;
   onEmpty?: () => void;
   onFocus?: () => void;
   onEdit?: () => void;
@@ -824,91 +1050,254 @@ function PersonCard({
       <button
         type="button"
         onClick={onEmpty}
-        className="empty-slot flex min-h-[132px] w-full flex-col items-center justify-center gap-2 rounded-3xl"
+        className="empty-slot flex min-h-[104px] w-full flex-col items-center justify-center gap-2 rounded-3xl"
       >
         <Plus className="h-5 w-5" />
-        <span className="text-xs">{roleLabel ? `添加${roleLabel}` : "添加"}</span>
+        <span className="text-caption">{roleLabel ? `添加${roleLabel}` : "添加"}</span>
       </button>
     );
   }
 
-  const initial = person.name.slice(0, 1);
+  // 锚点卡片（当前浏览的人）显示全部字段；亲属卡片只留姓名 + 生卒年 + 头像。
+  // 高度差来自信息量，宽度两者都是 w-full —— 尺寸差是结果，不是手段。
+  const anchor = !!highlighted;
   const years =
     person.birthYear || person.deathYear
       ? `${person.birthYear || "?"}–${person.deathYear || ""}`
       : "";
+  const place =
+    person.ancestralHome || person.household
+      ? [
+          person.ancestralHome && `籍 ${person.ancestralHome}`,
+          person.household && `户 ${person.household}`,
+        ]
+          .filter(Boolean)
+          .join("  ")
+      : "";
 
   return (
     <div
+      data-card={anchor ? "me" : "relative"}
       className={cn(
         "glass-card group relative w-full rounded-3xl transition-transform active:scale-[0.98]",
-        compact ? "p-3" : "p-3.5",
-        isMe && "me",
-        highlighted && !isMe && "focused"
+        anchor ? "p-card" : "p-3",
+        anchor && "me",
+        highlighted && "focused"
       )}
     >
+      {/* 点击卡片 = 看详情，不再重定心。重定心是显式动作，放在详情面板里，
+          免得「看一眼」被误当成「切换『我』」。 */}
       <button
         type="button"
-        onClick={onFocus}
+        onClick={onEdit}
         className="block w-full text-left"
-        aria-label={`查看 ${person.name} 的家庭`}
+        aria-label={`查看 ${person.name} 的详细信息`}
       >
-        <div className={cn("flex items-start gap-3", compact && "gap-2.5")}>
-          <div
-            className={cn(
-              "avatar-ring flex shrink-0 items-center justify-center rounded-2xl font-semibold text-white",
-              compact ? "h-9 w-9 text-xs" : "h-11 w-11 text-sm",
-              person.gender === "male" && "avatar-male",
-              person.gender === "female" && "avatar-female",
-              person.gender === "unknown" && "avatar-unknown",
-              isMe && "me-pulse"
-            )}
-          >
-            {initial}
-          </div>
+        <div className={cn("flex items-start", anchor ? "gap-3.5" : "gap-2.5")}>
+          <Avatar person={person} size={anchor ? "lg" : "sm"} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1">
-              <p className="truncate text-[15px] font-semibold leading-tight text-[var(--ink)]">
+              <p
+                className={cn(
+                  "truncate font-semibold leading-tight text-[var(--ink)]",
+                  anchor ? "text-subtitle" : "text-body"
+                )}
+              >
                 {person.name}
               </p>
               {isMe && (
-                <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
+                <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-caption font-medium text-[var(--accent)]">
                   我
                 </span>
               )}
               {roleLabel && roleLabel !== "我" && !isMe && (
-                <span className="shrink-0 rounded-full bg-[var(--glass-strong)] px-1.5 py-0.5 text-[10px] text-[var(--ink-soft)]">
+                <span className="shrink-0 rounded-full bg-[var(--glass-strong)] px-1.5 py-0.5 text-caption text-[var(--ink-soft)]">
                   {roleLabel}
                 </span>
               )}
             </div>
             {years && (
-              <p className="mt-0.5 text-[11px] text-[var(--ink-faint)]">{years}</p>
-            )}
-            {(person.ancestralHome || person.household) && (
-              <p className="mt-1 truncate text-[11px] text-[var(--ink-soft)]">
-                {person.ancestralHome && (
-                  <span className="mr-1.5">籍 {person.ancestralHome}</span>
+              <p
+                className={cn(
+                  "mt-0.5 text-caption",
+                  anchor ? "text-[var(--ink-soft)]" : "text-[var(--ink-faint)]"
                 )}
-                {person.household && <span>户 {person.household}</span>}
+              >
+                {years}
+                {(() => {
+                  const z = zodiacOf(person.birthYear);
+                  return z ? <span className="ml-1.5">属{z.label}</span> : null;
+                })()}
+              </p>
+            )}
+
+            {/* 五服：锚点卡片且不是「我」本人时展示 */}
+            {anchor && wufu && (
+              <p className="mt-1 text-caption">
+                <span
+                  className="rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[var(--accent)]"
+                  title={wufu.basis}
+                >
+                  {wufu.grade}
+                </span>
+                <span className="ml-1.5 text-[var(--ink-faint)]">
+                  {wufu.months}
+                </span>
+              </p>
+            )}
+
+            {/* 以下三块只属于锚点卡片 */}
+            {anchor && place && (
+              <p className="mt-1.5 truncate text-caption text-[var(--ink-soft)]">
+                {place}
+              </p>
+            )}
+            {anchor && person.note && (
+              <p className="mt-1.5 line-clamp-2 text-caption leading-relaxed text-[var(--ink-faint)]">
+                {person.note}
+              </p>
+            )}
+            {anchor && (person.events?.length ?? 0) > 0 && (
+              <p className="mt-1.5 text-caption text-[var(--ink-faint)]">
+                {person.events?.length} 条家族事件
               </p>
             )}
           </div>
         </div>
       </button>
 
-      <div className="mt-2.5 flex items-center justify-end gap-1 opacity-80">
-        {onSetMe && (
-          <Button variant="ghost" size="icon-sm" onClick={onSetMe} title="设为我">
+      {/* 只有皇冠是动作按钮。卡片本身已经能打开详情，铅笔是冗余的。 */}
+      {onSetMe && (
+        <div className="mt-2.5 flex items-center justify-end gap-1 opacity-80">
+          <Button variant="ghost" size="icon-sm" onClick={onSetMe} title="设为「我」">
             <Crown className="h-3.5 w-3.5" />
           </Button>
-        )}
-        {onEdit && (
-          <Button variant="ghost" size="icon-sm" onClick={onEdit} title="编辑">
-            <Pencil className="h-3.5 w-3.5" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ───────── Family Events ───────── */
+
+const EVENT_LABELS: Record<EventType, string> = {
+  marriage: "婚嫁",
+  migration: "迁徙",
+  birth: "出生",
+  death: "离世",
+  education: "褒学",
+  custom: "其他",
+};
+
+/**
+ * 生平事件编辑器。默认折叠——事件只在编辑面板里出现，
+ * 不放到卡片正面，否则锚点卡片会被塞爆（AC-31）。
+ */
+function FamilyEventList({
+  events,
+  onChange,
+}: {
+  events: FamilyEvent[];
+  onChange: (next: FamilyEvent[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const update = (id: string, patch: Partial<FamilyEvent>) =>
+    onChange(events.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+
+  const add = () =>
+    onChange([
+      ...events,
+      {
+        id: crypto.randomUUID(),
+        type: "custom",
+        date: "",
+        place: "",
+        note: "",
+      },
+    ]);
+
+  const remove = (id: string) => onChange(events.filter((e) => e.id !== id));
+
+  return (
+    <div className="space-y-2 rounded-2xl border border-[var(--glass-border)] bg-[var(--glass)] p-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between text-left"
+      >
+        <span className="text-body font-medium text-[var(--ink)]">家族事件</span>
+        <span className="flex items-center gap-2 text-caption text-[var(--ink-faint)]">
+          {events.length > 0 && <span>{events.length} 条</span>}
+          <ChevronDown
+            className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
+          />
+        </span>
+      </button>
+
+      {open && (
+        <div className="space-y-3 pt-1">
+          {events.length === 0 && (
+            <p className="text-caption text-[var(--ink-faint)]">
+              还没有记录。可以记婚嫁、迁徙、褒学等。
+            </p>
+          )}
+          {events.map((ev) => (
+            <div
+              key={ev.id}
+              className="space-y-2 rounded-xl border border-[var(--glass-edge)] p-2.5"
+            >
+              <div className="flex items-center gap-2">
+                <select
+                  value={ev.type}
+                  onChange={(e) =>
+                    update(ev.id, { type: e.target.value as EventType })
+                  }
+                  aria-label="事件类型"
+                  className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass)] px-2 py-1 text-caption text-[var(--ink)]"
+                >
+                  {EVENT_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {EVENT_LABELS[t]}
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  value={ev.date}
+                  onChange={(e) => update(ev.id, { date: e.target.value })}
+                  placeholder="时间，如：约1950"
+                  className="h-8 flex-1"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => remove(ev.id)}
+                  title="删除事件"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <Input
+                value={ev.place ?? ""}
+                onChange={(e) => update(ev.id, { place: e.target.value })}
+                placeholder="地点（可选）"
+                className="h-8"
+              />
+              <Input
+                value={ev.note ?? ""}
+                onChange={(e) => update(ev.id, { note: e.target.value })}
+                placeholder="备注（可选）"
+                className="h-8"
+              />
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={add}>
+            <Plus className="h-3.5 w-3.5" />
+            新增事件
           </Button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -919,18 +1308,24 @@ function PersonEditSheet({
   open,
   person,
   isMe,
+  isFocus,
+  wufu,
   onOpenChange,
   onSave,
   onDelete,
   onSetMe,
+  onRecenter,
 }: {
   open: boolean;
   person: Person | null;
   isMe: boolean;
+  isFocus: boolean;
+  wufu: WufuResult | null;
   onOpenChange: (open: boolean) => void;
   onSave: (p: Person) => void;
   onDelete: (id: string) => void;
   onSetMe: (id: string) => void;
+  onRecenter: (id: string) => void;
 }) {
   const [draft, setDraft] = useState<Person | null>(null);
 
@@ -945,20 +1340,47 @@ function PersonEditSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom">
+      <SheetContent side="responsive">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             编辑人物
             {isMe && (
-              <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent)]">
+              <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-caption font-medium text-[var(--accent)]">
                 我
               </span>
             )}
           </SheetTitle>
           <SheetDescription>完善姓名、生卒、籍贯与户籍信息</SheetDescription>
+
+          {/* 推导出来的信息集中放在这里：都不是存储字段，改生年/关系后自动重算 */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            {(() => {
+              const z = zodiacOf(draft.birthYear);
+              return z ? (
+                <span className="rounded-full bg-[var(--glass-strong)] px-2 py-0.5 text-caption text-[var(--ink-soft)]">
+                  属{z.label}
+                  {z.approx && <span className="text-[var(--ink-faint)]">（推）</span>}
+                </span>
+              ) : null;
+            })()}
+            {wufu && (
+              <span
+                className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-caption text-[var(--accent)]"
+                title={`${wufu.basis} · 服期 ${wufu.months}`}
+              >
+                {wufu.grade}
+              </span>
+            )}
+          </div>
+          {wufu && (
+            <p className="pt-1 text-caption leading-relaxed text-[var(--ink-faint)]">
+              五服：<span className="text-[var(--ink-soft)]">{wufu.grade}</span>
+              （{wufu.months}） · {wufu.basis}
+            </p>
+          )}
         </SheetHeader>
 
-        <div className="flex-1 space-y-3 overflow-y-auto pb-2">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
           <div className="space-y-1.5">
             <Label htmlFor="p-name">姓名</Label>
             <Input
@@ -1031,6 +1453,22 @@ function PersonEditSheet({
               maxLength={100}
             />
           </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="p-photo">照片链接</Label>
+            <Input
+              id="p-photo"
+              placeholder="https://… 外置图片地址（可留空）"
+              value={draft.photoUrl ?? ""}
+              onChange={(e) => set("photoUrl", e.target.value)}
+              inputMode="url"
+            />
+          </div>
+
+          <FamilyEventList
+            events={draft.events ?? []}
+            onChange={(next) => set("events", next)}
+          />
         </div>
 
         <div className="flex flex-col gap-2 pt-1">
@@ -1046,6 +1484,17 @@ function PersonEditSheet({
               >
                 <UserCheck className="h-4 w-4" />
                 设为我
+              </Button>
+            )}
+            {/* 卡片点击不再重定心（免得被误当成切换「我」），所以这里显式给一个 */}
+            {!isFocus && (
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => onRecenter(draft.id)}
+              >
+                <Home className="h-4 w-4" />
+                以此人为中心
               </Button>
             )}
             <Button
@@ -1155,7 +1604,7 @@ function AddRelationSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom">
+      <SheetContent side="responsive">
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
           <SheetDescription>
@@ -1175,7 +1624,7 @@ function AddRelationSheet({
               type="button"
               onClick={() => setTab(v)}
               className={cn(
-                "rounded-xl py-2 text-sm transition-all",
+                "rounded-xl py-2 text-body transition-all",
                 tab === v
                   ? "glass-btn text-[var(--ink)]"
                   : "text-[var(--ink-soft)] hover:text-[var(--ink)]"
@@ -1187,7 +1636,7 @@ function AddRelationSheet({
         </div>
 
         {tab === "new" ? (
-          <div className="flex-1 space-y-3 overflow-y-auto">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
             <div className="space-y-1.5">
               <Label htmlFor="a-name">姓名</Label>
               <Input
@@ -1200,7 +1649,7 @@ function AddRelationSheet({
             </div>
             <GenderPicker value={gender} onChange={setGender} />
             {mode === "child" && (
-              <p className="text-xs text-[var(--ink-faint)]">
+              <p className="text-caption text-[var(--ink-faint)]">
                 若当前人物有配偶，将自动关联为双亲。
               </p>
             )}
@@ -1223,9 +1672,9 @@ function AddRelationSheet({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <div className="flex-1 space-y-2 overflow-y-auto pb-2">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
               {candidates.length === 0 ? (
-                <p className="py-8 text-center text-sm text-[var(--ink-faint)]">
+                <p className="py-8 text-center text-body text-[var(--ink-faint)]">
                   暂无可关联人物
                 </p>
               ) : (
@@ -1243,7 +1692,7 @@ function AddRelationSheet({
                   >
                     <div
                       className={cn(
-                        "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-semibold text-white",
+                        "flex h-10 w-10 items-center justify-center rounded-xl text-body font-semibold text-white",
                         p.gender === "male" && "avatar-male",
                         p.gender === "female" && "avatar-female",
                         p.gender === "unknown" && "avatar-unknown"
@@ -1252,10 +1701,10 @@ function AddRelationSheet({
                       {p.name.slice(0, 1)}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-[var(--ink)]">
+                      <p className="truncate text-body font-medium text-[var(--ink)]">
                         {p.name}
                       </p>
-                      <p className="truncate text-[11px] text-[var(--ink-soft)]">
+                      <p className="truncate text-caption text-[var(--ink-soft)]">
                         {[
                           p.ancestralHome && `籍 ${p.ancestralHome}`,
                           p.household && `户 ${p.household}`,
