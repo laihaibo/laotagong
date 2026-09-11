@@ -39,12 +39,11 @@ components/
   family-app.tsx   应用外壳 + 各种弹窗（待继续拆分）
   family-tree.tsx  家族树画布：可缩放 / 可拖拽 / 回到「我」
   avatar.tsx       头像（照片 + 首字回退），卡片与画布共用
-  ui/              shadcn 风格原语：button / input / label / select / sheet / collapsible
+  ui/              shadcn 风格原语：button / input / label / sheet / collapsible
 lib/
   family.ts        纯函数数据层 —— 对 UI 零依赖，可单独测试
                    （关系算法 + 五服 + 生肖 + 享年推导都在这里）
   tree.ts          家族树布局算法（纯函数，可单独测试）
-  regions.ts       省级行政区 + 浙江省县级建议
   theme.ts         自研主题（非 next-themes）
   utils.ts         cn()
 scripts/
