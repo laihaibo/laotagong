@@ -1,12 +1,28 @@
+# ── 依赖与构建产物 ──
 node_modules
 .next
 out
-.env*.local
 *.tsbuildinfo
 next-env.d.ts
-.DS_Store
+
+# ── 环境变量 ──
+.env
+.env*.local
+
+# ── 测试产物 ──
 coverage/
-playwright-report/
 test-results/
-.remember/
+playwright-report/
+
+# ── 工具链 / AI 会话状态（本机运行产物，不进版本库） ──
+.claude/
 .omc/
+.remember/
+
+# ── 编辑器与系统 ──
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+*.swp
