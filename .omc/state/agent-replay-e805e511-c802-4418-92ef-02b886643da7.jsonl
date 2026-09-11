@@ -26,3 +26,5 @@
 {"t":0,"agent":"system","event":"skill_invoked","skill_name":"oh-my-claudecode:team"}
 {"t":0,"agent":"aworker","agent_type":"worker-backbone","event":"agent_start","parent_mode":"team"}
 {"t":0,"agent":"a3bf9e7","agent_type":"untracked-native-fork","event":"agent_stop","success":true,"synthetic":true,"telemetry_status":"unmatched_stop","reason":"SubagentStop arrived without a matching SubagentStart; native Agent/Task start telemetry was not observed."}
+{"t":0,"agent":"aworker","agent_type":"worker-backbone-2","event":"agent_start","parent_mode":"team"}
+{"t":0,"agent":"a718ad0","agent_type":"untracked-native-fork","event":"agent_stop","success":true,"synthetic":true,"telemetry_status":"unmatched_stop","reason":"SubagentStop arrived without a matching SubagentStart; native Agent/Task start telemetry was not observed."}

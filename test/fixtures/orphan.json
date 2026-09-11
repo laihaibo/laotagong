@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "persons": {
+    "A": {
+      "id": "A",
+      "name": "我",
+      "gender": "male",
+      "birthYear": "2000",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    },
+    "O": {
+      "id": "O",
+      "name": "陌生人",
+      "gender": "unknown",
+      "birthYear": "",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    }
+  },
+  "parents": {},
+  "spouses": [],
+  "meId": "A"
+}

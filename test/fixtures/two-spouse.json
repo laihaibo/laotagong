@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "persons": {
+    "A": {
+      "id": "A",
+      "name": "爷爷",
+      "gender": "male",
+      "birthYear": "1940",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    },
+    "B": {
+      "id": "B",
+      "name": "奶奶甲",
+      "gender": "female",
+      "birthYear": "1945",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    },
+    "X": {
+      "id": "X",
+      "name": "奶奶乙",
+      "gender": "female",
+      "birthYear": "1946",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    },
+    "C": {
+      "id": "C",
+      "name": "爸爸",
+      "gender": "male",
+      "birthYear": "1970",
+      "deathYear": "",
+      "ancestralHome": "",
+      "household": "",
+      "note": "",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    }
+  },
+  "parents": {
+    "C": { "fatherId": "A" }
+  },
+  "spouses": [
+    { "a": "A", "b": "B" },
+    { "a": "A", "b": "X" }
+  ],
+  "meId": "C"
+}

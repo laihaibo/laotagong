@@ -140,15 +140,15 @@
       "type": "file"
     },
     {
-      "path": "package.json",
-      "accessCount": 8,
-      "lastAccessed": 1789115966672,
+      "path": "lib/family.ts",
+      "accessCount": 12,
+      "lastAccessed": 1789117408366,
       "type": "file"
     },
     {
-      "path": "lib/family.ts",
-      "accessCount": 7,
-      "lastAccessed": 1789114837941,
+      "path": "package.json",
+      "accessCount": 9,
+      "lastAccessed": 1789116882966,
       "type": "file"
     },
     {
@@ -230,6 +230,30 @@
       "type": "file"
     },
     {
+      "path": "test/setup.ts",
+      "accessCount": 2,
+      "lastAccessed": 1789116881940,
+      "type": "file"
+    },
+    {
+      "path": "vitest.config.ts",
+      "accessCount": 2,
+      "lastAccessed": 1789116882480,
+      "type": "file"
+    },
+    {
+      "path": "test/fixtures/broken-v1.json",
+      "accessCount": 2,
+      "lastAccessed": 1789117301941,
+      "type": "file"
+    },
+    {
+      "path": "test/family.links.test.ts",
+      "accessCount": 2,
+      "lastAccessed": 1789117383302,
+      "type": "file"
+    },
+    {
       "path": "lib/utils.ts",
       "accessCount": 1,
       "lastAccessed": 1789110392906,
@@ -245,18 +269,6 @@
       "path": "README.md",
       "accessCount": 1,
       "lastAccessed": 1789110412547,
-      "type": "file"
-    },
-    {
-      "path": "vitest.config.ts",
-      "accessCount": 1,
-      "lastAccessed": 1789114686603,
-      "type": "file"
-    },
-    {
-      "path": "test/setup.ts",
-      "accessCount": 1,
-      "lastAccessed": 1789114698108,
       "type": "file"
     },
     {
@@ -287,6 +299,18 @@
       "path": "playwright.config.ts",
       "accessCount": 1,
       "lastAccessed": 1789115172207,
+      "type": "file"
+    },
+    {
+      "path": "test/fixtures/three-generation.json",
+      "accessCount": 1,
+      "lastAccessed": 1789117065404,
+      "type": "file"
+    },
+    {
+      "path": "test/fixtures/orphan.json",
+      "accessCount": 1,
+      "lastAccessed": 1789117069459,
       "type": "file"
     }
   ],

@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-09-11T08:19:43.927Z",
+  "updatedAt": "2026-09-11T08:58:53.942Z",
   "missions": [
     {
       "id": "session:e805e511-c802-4418-92ef-02b886643da7:none",
@@ -113,14 +113,14 @@
       "name": "team",
       "objective": "Session mission",
       "createdAt": "2026-09-11T08:16:21.875Z",
-      "updatedAt": "2026-09-11T08:19:43.927Z",
-      "status": "done",
-      "workerCount": 1,
+      "updatedAt": "2026-09-11T08:58:53.942Z",
+      "status": "running",
+      "workerCount": 2,
       "taskCounts": {
-        "total": 1,
+        "total": 2,
         "pending": 0,
         "blocked": 0,
-        "inProgress": 0,
+        "inProgress": 1,
         "completed": 1,
         "failed": 0
       },
@@ -133,7 +133,17 @@
           "currentStep": null,
           "latestUpdate": "completed",
           "completedSummary": null,
-          "updatedAt": "2026-09-11T08:19:43.927Z"
+          "updatedAt": "2026-09-11T08:58:53.942Z"
+        },
+        {
+          "name": "worker-backbone-2:aworker",
+          "role": "worker-backbone-2",
+          "ownership": "aworker-backbone-2-f1493a6b695e4606",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-09-11T08:51:57.871Z"
         }
       ],
       "timeline": [
@@ -152,6 +162,22 @@
           "agent": "worker-backbone:aworker",
           "detail": "completed",
           "sourceKey": "session-stop:a3bf9e7f495ac2cf9"
+        },
+        {
+          "id": "session-start:aworker-backbone-2-f1493a6b695e4606:2026-09-11T08:51:57.871Z",
+          "at": "2026-09-11T08:51:57.871Z",
+          "kind": "update",
+          "agent": "worker-backbone-2:aworker",
+          "detail": "started worker-backbone-2:aworker",
+          "sourceKey": "session-start:aworker-backbone-2-f1493a6b695e4606"
+        },
+        {
+          "id": "session-stop:a718ad066b38859fb:2026-09-11T08:58:53.942Z",
+          "at": "2026-09-11T08:58:53.942Z",
+          "kind": "completion",
+          "agent": "worker-backbone:aworker",
+          "detail": "completed",
+          "sourceKey": "session-stop:a718ad066b38859fb"
         }
       ]
     }
