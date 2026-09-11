@@ -192,6 +192,29 @@ spouses = [{a, b}]                        ← 婚姻边（可选、独立）
   重定义会一次性重新缩放全库所有数值工具类，被误读成「重设计把布局改崩了」。
   要加新档位就用 `--spacing-card` / `--spacing-section` 这类具名 token。
 
+### 只在安全上下文存在 / 会抛异常的 API
+
+**这些都不是理论风险，都真的崩过整页：**
+
+- **`crypto.randomUUID()` 只在安全上下文存在**（https / localhost）。
+  用手机通过局域网 IP 访问 dev server（`http://192.168.x.x:3000`）时它是 `undefined`，
+  直接调用就抛 `TypeError`，整棵 React 树跟着崩。**一律用 `newId()`**，
+  它在缺失时回退到时间戳 + 随机串。
+- **`localStorage.setItem` 会抛**：配额超限、Safari 无痕模式、浏览器禁用存储。
+  `saveState` 因此**返回 boolean 而不是抛**，调用方负责提示用户。
+  `loadState` 一直有 try/catch，写路径曾经没有——**这个不对称本身就是 bug**。
+- **`setPointerCapture` 会抛** `NotFoundError`（pointerId 失效时）。画布上已接住。
+- **`app/error.tsx` 是安全网**：没有它，任何客户端异常都只给一个白页或
+  浏览器的「This page couldn't load」，**排查只能靠猜**。
+
+推论：写任何「读/写浏览器 API」的代码时，先问一句「它会不会抛」，会就把异常接住。
+
+### 画布性能：平移不要重渲染节点
+
+`TreeScene` 单独抽出来并 `memo`。平移/缩放只改外层 div 的 `transform`，
+场景的 props 不变就整块跳过协调。**不这么做的话，每一次 `pointermove`
+都会重渲染全部节点**（每个节点含头像和三个按钮），人一多就把主线程堵死。
+
 ### 静态导出（`output: "export"`）
 
 **没有服务端能力**：无 Server Actions、无 API route、无 middleware、无动态路由。

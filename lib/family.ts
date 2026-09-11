@@ -75,6 +75,23 @@ export function createEmptyState(): FamilyState {
  * 写路径认识新字段、读路径不认识，于是 saveState 写进去、loadState 又丢掉，
  * 而构建与测试全绿，没有任何信号。
  */
+/**
+ * 生成 id。
+ *
+ * `crypto.randomUUID()` **只在安全上下文存在**（https / localhost）。
+ * 用手机通过局域网 IP 访问 dev server（http://192.168.x.x:3000）时它是 undefined，
+ * 直接调用会抛 TypeError 并把整棵 React 树带崩。
+ * 这是 Web Crypto 的既有约束，所以这里显式处理，而不是假设它一定在。
+ *
+ * 回退 id 用时间戳 + 随机串：族谱规模下碰撞概率可忽略，且只在本机使用。
+ */
+export function newId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function normalizeEvent(raw: unknown): FamilyEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as Record<string, unknown>;
@@ -82,7 +99,7 @@ export function normalizeEvent(raw: unknown): FamilyEvent | null {
     ? (e.type as EventType)
     : "custom";
   return {
-    id: typeof e.id === "string" && e.id ? e.id : crypto.randomUUID(),
+    id: typeof e.id === "string" && e.id ? e.id : newId(),
     type,
     date: typeof e.date === "string" ? e.date : "",
     place: typeof e.place === "string" ? e.place : "",
@@ -122,7 +139,7 @@ export function normalizePerson(id: string, raw: unknown): Person {
 
 export function createPerson(partial: Partial<Person> = {}): Person {
   const now = Date.now();
-  const base = normalizePerson(partial.id ?? crypto.randomUUID(), partial);
+  const base = normalizePerson(partial.id ?? newId(), partial);
   return { ...base, createdAt: partial.createdAt ?? now, updatedAt: now };
 }
 
@@ -462,9 +479,22 @@ export function loadState(): FamilyState {
   }
 }
 
-export function saveState(state: FamilyState): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, exportState(state));
+/**
+ * 写入本机存储。**返回是否成功**，不抛异常。
+ *
+ * `localStorage.setItem` 会在配额超限、Safari 无痕模式、浏览器禁用存储时抛异常。
+ * 这个函数跑在每次数据变动之后，一旦抛出就是整页崩——
+ * 而 loadState 一直是接住异常的，写路径没接，这个不对称本身就是 bug。
+ * 失败时返回 false，让调用方提示用户，而不是让应用静默地死掉。
+ */
+export function saveState(state: FamilyState): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, exportState(state));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function genderLabel(g: Gender): string {

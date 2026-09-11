@@ -19,8 +19,8 @@ import {
  */
 
 /** 单个人物格子的尺寸 */
-export const NODE_W = 136;
-export const NODE_H = 84;
+export const NODE_W = 176;
+export const NODE_H = 88;
 /** 同代相邻单元的水平间距 */
 const H_GAP = 24;
 /** 单元内部成员（夫妻）的间距 */

@@ -61,6 +61,7 @@ import {
   importState,
   linkChildWithParents,
   loadState,
+  newId,
   removePersonDeep,
   saveState,
 } from "@/lib/family";
@@ -161,6 +162,8 @@ export function FamilyApp() {
   /** 有多位配偶候选、无法自动确定的缺失双亲；等用户逐条指定 */
   const [ambiguous, setAmbiguous] = useState<AmbiguousLink[]>([]);
   const [ambiguousOpen, setAmbiguousOpen] = useState(false);
+  /** 节点上的「增加关系」按钮：先选关系种类，再开新建表单 */
+  const [relationPickerFor, setRelationPickerFor] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -189,7 +192,9 @@ export function FamilyApp() {
 
   useEffect(() => {
     if (!hydrated) return;
-    saveState(state);
+    if (!saveState(state)) {
+      setToast("本机存储写入失败：配额可能已满，或被浏览器限制");
+    }
   }, [state, hydrated]);
 
   useEffect(() => {
@@ -416,6 +421,8 @@ export function FamilyApp() {
             state={state}
             focusId={focus}
             onOpenPerson={(id) => setEditingId(id)}
+            onAddRelation={(id) => setRelationPickerFor(id)}
+            onSetMe={(id) => setAsMe(id)}
           />
         )}
       </main>
@@ -479,6 +486,50 @@ export function FamilyApp() {
             <p className="pt-2 text-caption text-[var(--ink-faint)]">
               共 {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机浏览器
             </p>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* 增加关系：节点上放不下四个按钮，先选种类 */}
+      <Sheet
+        open={!!relationPickerFor}
+        onOpenChange={(open) => {
+          if (!open) setRelationPickerFor(null);
+        }}
+      >
+        <SheetContent side="responsive">
+          <SheetHeader>
+            <SheetTitle>增加关系</SheetTitle>
+            <SheetDescription>
+              为「
+              {relationPickerFor
+                ? state.persons[relationPickerFor]?.name ?? "此人"
+                : "此人"}
+              」添加亲属，或关联已有成员
+            </SheetDescription>
+          </SheetHeader>
+          <div className="grid grid-cols-2 gap-2 pb-2">
+            {(
+              [
+                ["father", "父亲"],
+                ["mother", "母亲"],
+                ["spouse", "配偶"],
+                ["child", "子女"],
+              ] as const
+            ).map(([mode, label]) => (
+              <Button
+                key={mode}
+                variant="outline"
+                className="h-12"
+                onClick={() => {
+                  setFocusId(relationPickerFor);
+                  setRelationPickerFor(null);
+                  setAddMode(mode);
+                }}
+              >
+                {label}
+              </Button>
+            ))}
           </div>
         </SheetContent>
       </Sheet>
@@ -905,7 +956,7 @@ function FamilyEventList({
     onChange([
       ...events,
       {
-        id: crypto.randomUUID(),
+        id: newId(),
         type: "custom",
         date: "",
         place: "",

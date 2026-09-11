@@ -25,7 +25,11 @@ export function loadThemeMode(): ThemeMode {
 
 export function saveThemeMode(mode: ThemeMode): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(THEME_STORAGE_KEY, mode);
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, mode);
+  } catch {
+    // 存不下就算了：主题是一次性的偏好，不值得为它把页面搞崩
+  }
 }
 
 export function applyTheme(resolved: "light" | "dark"): void {

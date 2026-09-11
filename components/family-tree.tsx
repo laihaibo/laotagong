@@ -1,12 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2, Minus, Plus, Target } from "lucide-react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Crown, Info, Maximize2, Minus, Plus, Target, UserPlus } from "lucide-react";
 
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
-import { type FamilyState, lifespanOf, zodiacOf } from "@/lib/family";
-import { layoutFamilyTree } from "@/lib/tree";
+import {
+  type FamilyState,
+  type Person,
+  lifespanOf,
+  zodiacOf,
+} from "@/lib/family";
+import { type TreeLayout, layoutFamilyTree } from "@/lib/tree";
 import { cn } from "@/lib/utils";
 
 const MIN_SCALE = 0.2;
@@ -32,10 +44,14 @@ export function FamilyTree({
   state,
   focusId,
   onOpenPerson,
+  onAddRelation,
+  onSetMe,
 }: {
   state: FamilyState;
   focusId: string | null;
   onOpenPerson: (id: string) => void;
+  onAddRelation: (id: string) => void;
+  onSetMe: (id: string) => void;
 }) {
   const layout = useMemo(() => layoutFamilyTree(state), [state]);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -117,7 +133,11 @@ export function FamilyTree({
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // pointerId 已失效时浏览器会抛 NotFoundError；捕获失败不该把页面带崩
+    }
 
     if (pointers.current.size === 1) {
       panOrigin.current = {
@@ -200,96 +220,15 @@ export function FamilyTree({
             height: layout.height,
           }}
         >
-          {/* 连线画在节点下层 */}
-          <svg
-            className="pointer-events-none absolute left-0 top-0"
-            width={layout.width}
-            height={layout.height}
-            aria-hidden
-          >
-            {layout.edges.map((edge) => {
-              const from = layout.byId.get(edge.fromId);
-              const to = layout.byId.get(edge.toId);
-              if (!from || !to) return null;
-              const fx = from.x + from.width / 2;
-              const fy = from.y + from.height;
-              const tx = to.x + to.width / 2;
-              const ty = to.y;
-
-              if (edge.kind === "spouse") {
-                // 夫妻：两点之间一条短横线，同高
-                return (
-                  <line
-                    key={`s-${edge.fromId}-${edge.toId}`}
-                    x1={from.x + from.width}
-                    y1={from.y + from.height / 2}
-                    x2={to.x}
-                    y2={to.y + to.height / 2}
-                    stroke="var(--accent)"
-                    strokeWidth={2}
-                    strokeOpacity={0.45}
-                  />
-                );
-              }
-
-              // 血亲：竖-横-竖的折线，比斜线更像族谱
-              const midY = fy + (ty - fy) / 2;
-              return (
-                <path
-                  key={`b-${edge.fromId}-${edge.toId}`}
-                  d={`M ${fx} ${fy} V ${midY} H ${tx} V ${ty}`}
-                  fill="none"
-                  stroke="var(--glass-edge)"
-                  strokeWidth={2}
-                />
-              );
-            })}
-          </svg>
-
-          {layout.nodes.map((node) => {
-            const person = state.persons[node.id];
-            if (!person) return null;
-            const isMe = state.meId === node.id;
-            const isFocus = focusId === node.id;
-            const years =
-              person.birthYear || person.deathYear
-                ? `${person.birthYear || "?"}–${person.deathYear || ""}`
-                : "";
-            const age = lifespanOf(person);
-            const zodiac = zodiacOf(person.birthYear);
-
-            return (
-              <button
-                key={node.id}
-                type="button"
-                data-tree-node
-                onClick={() => onOpenPerson(node.id)}
-                style={{
-                  left: node.x,
-                  top: node.y,
-                  width: node.width,
-                  height: node.height,
-                }}
-                className={cn(
-                  "glass-card absolute flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-center transition-shadow",
-                  isMe && "me",
-                  isFocus && "focused"
-                )}
-              >
-                <Avatar person={person} size={isMe ? "sm" : "xs"} />
-                <span className="w-full truncate text-caption font-medium text-[var(--ink)]">
-                  {person.name}
-                </span>
-                {years && (
-                  <span className="w-full truncate text-caption text-[var(--ink-faint)]">
-                    {years}
-                    {age !== null && ` · ${age}`}
-                    {zodiac && ` · ${zodiac.label}`}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+          <TreeScene
+            layout={layout}
+            persons={state.persons}
+            meId={state.meId}
+            focusId={focusId}
+            onOpenPerson={onOpenPerson}
+            onAddRelation={onAddRelation}
+            onSetMe={onSetMe}
+          />
         </div>
       </div>
 
@@ -347,3 +286,162 @@ export function FamilyTree({
     </div>
   );
 }
+
+
+/**
+ * 画布「场景」：连线 + 所有节点。
+ *
+ * 单独抽出来并 memo：平移/缩放只改外层 div 的 transform，
+ * 场景的 props 不变就整块跳过协调。否则每一次 pointermove 都要重渲染
+ * 全部节点（每个节点含头像与三个按钮），人一多就把主线程堵死。
+ */
+const TreeScene = memo(function TreeScene({
+  layout,
+  persons,
+  meId,
+  focusId,
+  onOpenPerson,
+  onAddRelation,
+  onSetMe,
+}: {
+  layout: TreeLayout;
+  persons: Record<string, Person>;
+  meId: string | null;
+  focusId: string | null;
+  onOpenPerson: (id: string) => void;
+  onAddRelation: (id: string) => void;
+  onSetMe: (id: string) => void;
+}) {
+  return (
+    <>
+      {/* 连线画在节点下层 */}
+          <svg
+            className="pointer-events-none absolute left-0 top-0"
+            width={layout.width}
+            height={layout.height}
+            aria-hidden
+          >
+            {layout.edges.map((edge) => {
+              const from = layout.byId.get(edge.fromId);
+              const to = layout.byId.get(edge.toId);
+              if (!from || !to) return null;
+              const fx = from.x + from.width / 2;
+              const fy = from.y + from.height;
+              const tx = to.x + to.width / 2;
+              const ty = to.y;
+
+              if (edge.kind === "spouse") {
+                // 夫妻：两点之间一条短横线，同高
+                return (
+                  <line
+                    key={`s-${edge.fromId}-${edge.toId}`}
+                    x1={from.x + from.width}
+                    y1={from.y + from.height / 2}
+                    x2={to.x}
+                    y2={to.y + to.height / 2}
+                    stroke="var(--accent)"
+                    strokeWidth={2}
+                    strokeOpacity={0.45}
+                  />
+                );
+              }
+
+              // 血亲：竖-横-竖的折线，比斜线更像族谱
+              const midY = fy + (ty - fy) / 2;
+              return (
+                <path
+                  key={`b-${edge.fromId}-${edge.toId}`}
+                  d={`M ${fx} ${fy} V ${midY} H ${tx} V ${ty}`}
+                  fill="none"
+                  stroke="var(--glass-edge)"
+                  strokeWidth={2}
+                />
+              );
+            })}
+          </svg>
+
+          {layout.nodes.map((node) => {
+            const person = persons[node.id];
+            if (!person) return null;
+            const isMe = meId === node.id;
+            const isFocus = focusId === node.id;
+            const years =
+              person.birthYear || person.deathYear
+                ? `${person.birthYear || "?"}–${person.deathYear || ""}`
+                : "";
+            const age = lifespanOf(person);
+            const zodiac = zodiacOf(person.birthYear);
+
+            return (
+              <div
+                key={node.id}
+                data-tree-node
+                style={{
+                  left: node.x,
+                  top: node.y,
+                  width: node.width,
+                  height: node.height,
+                }}
+                className={cn(
+                  "glass-card absolute flex items-stretch overflow-hidden rounded-2xl",
+                  isMe && "me",
+                  isFocus && "focused"
+                )}
+              >
+                {/* 主体：看详情 */}
+                <button
+                  type="button"
+                  onClick={() => onOpenPerson(node.id)}
+                  className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-2 text-center"
+                >
+                  <Avatar person={person} size={isMe ? "sm" : "xs"} />
+                  <span className="w-full truncate text-caption font-medium text-[var(--ink)]">
+                    {person.name}
+                  </span>
+                  {years && (
+                    <span className="w-full truncate text-caption text-[var(--ink-faint)]">
+                      {years}
+                      {age !== null && ` · ${age}`}
+                      {zodiac && ` · ${zodiac.label}`}
+                    </span>
+                  )}
+                </button>
+
+                {/* 三个动作竖排在卡片右侧：增加关系 / 详情 / 设为「我」
+                    必须 onPointerDown 阻止冒泡，否则会顺手把画布拖起来 */}
+                <div
+                  className="flex shrink-0 flex-col items-center justify-center gap-0.5 border-l border-[var(--glass-edge)] px-0.5"
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onAddRelation(node.id)}
+                    title="增加关系"
+                    className="rounded-lg p-1 text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
+                  >
+                    <UserPlus className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenPerson(node.id)}
+                    title="详情"
+                    className="rounded-lg p-1 text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSetMe(node.id)}
+                    disabled={isMe}
+                    title="设为「我」"
+                    className="rounded-lg p-1 text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--accent)] disabled:opacity-30"
+                  >
+                    <Crown className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+    </>
+  );
+});
