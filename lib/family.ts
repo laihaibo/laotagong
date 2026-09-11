@@ -26,8 +26,16 @@ export interface Person {
   id: string;
   name: string;
   gender: Gender;
+  /** 严格的 4 位年份字符串，或空串表示不详 */
   birthYear?: string;
+  /** "1".."12"，空串表示不详 */
+  birthMonth?: string;
+  /** "1".."31"，空串表示不详 */
+  birthDay?: string;
   deathYear?: string;
+  deathMonth?: string;
+  deathDay?: string;
+  /** 省 + 市/县 合成的一条地址，如「浙江省三门县」 */
   ancestralHome?: string;
   household?: string;
   note?: string;
@@ -92,8 +100,12 @@ export function normalizePerson(id: string, raw: unknown): Person {
       p.gender === "male" || p.gender === "female" || p.gender === "unknown"
         ? p.gender
         : "unknown",
-    birthYear: typeof p.birthYear === "string" ? p.birthYear : "",
-    deathYear: typeof p.deathYear === "string" ? p.deathYear : "",
+    birthYear: strictYear(p.birthYear),
+    birthMonth: strictDayPart(p.birthMonth, 12),
+    birthDay: strictDayPart(p.birthDay, 31),
+    deathYear: strictYear(p.deathYear),
+    deathMonth: strictDayPart(p.deathMonth, 12),
+    deathDay: strictDayPart(p.deathDay, 31),
     ancestralHome: typeof p.ancestralHome === "string" ? p.ancestralHome : "",
     household: typeof p.household === "string" ? p.household : "",
     note: typeof p.note === "string" ? p.note : "",
@@ -112,6 +124,29 @@ export function createPerson(partial: Partial<Person> = {}): Person {
   const now = Date.now();
   const base = normalizePerson(partial.id ?? crypto.randomUUID(), partial);
   return { ...base, createdAt: partial.createdAt ?? now, updatedAt: now };
+}
+
+/**
+ * 把任意写法收敛成严格 4 位年份。
+ *
+ * 「约1950」→「1950」：抽得出年份就保留年份，只丢掉「约」这个修饰，
+ * 比整条丢掉更接近无损。「?」「待考」抽不出数字 → 空串（不详）。
+ */
+function strictYear(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const match = raw.match(/\d{4}/);
+  if (!match) return "";
+  const year = Number(match[0]);
+  if (!Number.isFinite(year) || year < 1 || year > 2999) return "";
+  return match[0];
+}
+
+/** 收敛到 1..max 的整数字符串，越界或解析不出即空串 */
+function strictDayPart(raw: unknown, max: number): string {
+  if (typeof raw !== "string" || raw.trim() === "") return "";
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > max) return "";
+  return String(value);
 }
 
 export function getFatherId(state: FamilyState, personId: string): string | null {

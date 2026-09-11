@@ -25,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -73,6 +74,12 @@ import {
   resolveTheme,
   saveThemeMode,
 } from "@/lib/theme";
+import {
+  PROVINCES,
+  countySuggestionsOf,
+  joinAddress,
+  splitAddress,
+} from "@/lib/regions";
 import { cn } from "@/lib/utils";
 
 type AddMode = RelationKind | null;
@@ -121,6 +128,126 @@ const RELATION_APPLIERS: Record<
   child: (state, focusId, personId) =>
     linkChildWithParents(state, personId, focusId),
 };
+
+/** 出生/逝世年份的下拉范围：今年往前到 1900 */
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS: string[] = Array.from(
+  { length: CURRENT_YEAR - 1900 + 1 },
+  (_, i) => String(CURRENT_YEAR - i)
+);
+const MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => String(i + 1));
+const DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => String(i + 1));
+
+/** 省下拉 + 市/县可搜可选。地址仍只存一条字符串，拆合都在这里。 */
+function AddressField({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const { province, county } = splitAddress(value);
+  const suggestions = countySuggestionsOf(province);
+  const listId = `${id}-counties`;
+
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={`${id}-county`}>{label}</Label>
+      <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-2">
+        <Select
+          aria-label={`${label}省份`}
+          value={province}
+          onChange={(e) => onChange(joinAddress(e.target.value, county))}
+        >
+          <option value="">省…</option>
+          {PROVINCES.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </Select>
+        <Input
+          id={`${id}-county`}
+          list={suggestions.length > 0 ? listId : undefined}
+          placeholder="三门县"
+          value={county}
+          onChange={(e) => onChange(joinAddress(province, e.target.value))}
+          maxLength={40}
+        />
+      </div>
+      {suggestions.length > 0 && (
+        <datalist id={listId}>
+          {suggestions.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      )}
+    </div>
+  );
+}
+
+/** 年 / 月 / 日 三个下拉。月日可留空——很多长辈本来就只知年份。 */
+function DateField({
+  label,
+  year,
+  month,
+  day,
+  onChange,
+}: {
+  label: string;
+  year: string;
+  month: string;
+  day: string;
+  onChange: (part: "year" | "month" | "day", value: string) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label>{label}</Label>
+      <div className="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-2">
+        <Select
+          aria-label={`${label}年份`}
+          value={year}
+          onChange={(e) => onChange("year", e.target.value)}
+        >
+          <option value="">不详</option>
+          {YEAR_OPTIONS.map((y) => (
+            <option key={y} value={y}>
+              {y}
+            </option>
+          ))}
+        </Select>
+        <Select
+          aria-label={`${label}月份`}
+          value={month}
+          onChange={(e) => onChange("month", e.target.value)}
+        >
+          <option value="">月</option>
+          {MONTH_OPTIONS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </Select>
+        <Select
+          aria-label={`${label}日期`}
+          value={day}
+          onChange={(e) => onChange("day", e.target.value)}
+        >
+          <option value="">日</option>
+          {DAY_OPTIONS.map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </Select>
+      </div>
+    </div>
+  );
+}
 
 /**
  * 应用标识：世系分支 —— 一位先祖，向四方延出后代。
@@ -1614,7 +1741,16 @@ function PersonEditSheet({
   const [draft, setDraft] = useState<Person | null>(null);
 
   useEffect(() => {
-    if (open && person) setDraft({ ...person });
+    if (open && person) {
+      setDraft({
+        ...person,
+        // 日期下拉的默认落点：2000-01-01，省得从今年一路往下滚。
+        // 年下拉里有「不详」可以一键清空。
+        birthYear: person.birthYear || "2000",
+        birthMonth: person.birthMonth || "1",
+        birthDay: person.birthDay || "1",
+      });
+    }
   }, [open, person]);
 
   if (!draft) return null;
@@ -1684,53 +1820,53 @@ function PersonEditSheet({
             onChange={(g) => set("gender", g)}
           />
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="p-birth">出生年</Label>
-              <Input
-                id="p-birth"
-                inputMode="numeric"
-                placeholder="1980"
-                value={draft.birthYear ?? ""}
-                onChange={(e) => set("birthYear", e.target.value)}
-                maxLength={12}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="p-death">逝世年</Label>
-              <Input
-                id="p-death"
-                inputMode="numeric"
-                placeholder="可空"
-                value={draft.deathYear ?? ""}
-                onChange={(e) => set("deathYear", e.target.value)}
-                maxLength={12}
-              />
-            </div>
-          </div>
+          <DateField
+            label="出生日期"
+            year={draft.birthYear ?? ""}
+            month={draft.birthMonth ?? ""}
+            day={draft.birthDay ?? ""}
+            onChange={(part, value) =>
+              set(
+                part === "year"
+                  ? "birthYear"
+                  : part === "month"
+                    ? "birthMonth"
+                    : "birthDay",
+                value
+              )
+            }
+          />
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="p-home">籍贯</Label>
-              <Input
-                id="p-home"
-                placeholder="如：福建泉州"
-                value={draft.ancestralHome ?? ""}
-                onChange={(e) => set("ancestralHome", e.target.value)}
-                maxLength={50}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="p-hh">户籍</Label>
-              <Input
-                id="p-hh"
-                placeholder="如：上海市浦东新区"
-                value={draft.household ?? ""}
-                onChange={(e) => set("household", e.target.value)}
-                maxLength={50}
-              />
-            </div>
-          </div>
+          <DateField
+            label="逝世日期"
+            year={draft.deathYear ?? ""}
+            month={draft.deathMonth ?? ""}
+            day={draft.deathDay ?? ""}
+            onChange={(part, value) =>
+              set(
+                part === "year"
+                  ? "deathYear"
+                  : part === "month"
+                    ? "deathMonth"
+                    : "deathDay",
+                value
+              )
+            }
+          />
+
+          <AddressField
+            id="p-home"
+            label="籍贯"
+            value={draft.ancestralHome ?? ""}
+            onChange={(next) => set("ancestralHome", next)}
+          />
+
+          <AddressField
+            id="p-hh"
+            label="户籍"
+            value={draft.household ?? ""}
+            onChange={(next) => set("household", next)}
+          />
 
           <div className="space-y-1">
             <Label htmlFor="p-note">备注</Label>

@@ -100,16 +100,64 @@ describe("P-1 · 往返键一致性（写进去的东西必须读得回来）", 
   });
 });
 
-describe("AC-22 · 非规范年份原样保留", () => {
-  it("约1950 / ? / 1949- 全部往返不变", () => {
-    const values = ["约1950", "?", "1949-", "民国38年"];
-    for (const v of values) {
-      const p = createPerson({ id: "y", name: "甲", birthYear: v });
-      const back = importState(
-        exportState({ ...createEmptyState(), persons: { y: p } })
-      ).persons.y;
-      expect(back.birthYear).toBe(v);
+describe("AC-22 · 年份收敛为严格 4 位（UI 已改为下拉）", () => {
+  it("抽得出年份就保留年份，只丢掉修饰词", () => {
+    // 「约1950」→「1950」而不是整条丢掉：比丢弃更接近无损
+    expect(createPerson({ id: "y", birthYear: "约1950" }).birthYear).toBe("1950");
+    expect(createPerson({ id: "y", birthYear: "1949-" }).birthYear).toBe("1949");
+    expect(createPerson({ id: "y", birthYear: "民国38年" }).birthYear).toBe("");
+  });
+
+  it("抽不出年份的一律记为不详", () => {
+    for (const v of ["?", "不详", "待考", ""]) {
+      expect(createPerson({ id: "y", birthYear: v }).birthYear).toBe("");
     }
+  });
+
+  it("收敛结果经过往返仍然稳定（幂等）", () => {
+    const first = createPerson({ id: "y", name: "甲", birthYear: "约1950" });
+    const back = importState(
+      exportState({ ...createEmptyState(), persons: { y: first } })
+    ).persons.y;
+    expect(back.birthYear).toBe("1950");
+    expect(createPerson(back).birthYear).toBe("1950");
+  });
+});
+
+describe("生卒月日 · 收敛到合法区间", () => {
+  it("月收敛到 1..12，日收敛到 1..31", () => {
+    const p = createPerson({
+      id: "d",
+      birthMonth: "7",
+      birthDay: "15",
+      deathMonth: "12",
+      deathDay: "31",
+    });
+    expect(p.birthMonth).toBe("7");
+    expect(p.birthDay).toBe("15");
+    expect(p.deathMonth).toBe("12");
+    expect(p.deathDay).toBe("31");
+  });
+
+  it("越界或非数字一律记为不详", () => {
+    const p = createPerson({
+      id: "d",
+      birthMonth: "13",
+      birthDay: "32",
+      deathMonth: "0",
+      deathDay: "abc",
+    });
+    expect(p.birthMonth).toBe("");
+    expect(p.birthDay).toBe("");
+    expect(p.deathMonth).toBe("");
+    expect(p.deathDay).toBe("");
+  });
+
+  it("月日可以留空（很多长辈只知年份）", () => {
+    const p = createPerson({ id: "d", birthYear: "1940" });
+    expect(p.birthYear).toBe("1940");
+    expect(p.birthMonth).toBe("");
+    expect(p.birthDay).toBe("");
   });
 });
 
