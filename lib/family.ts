@@ -127,6 +127,22 @@ export function createPerson(partial: Partial<Person> = {}): Person {
 }
 
 /**
+ * 享年：生卒年都有才计算。
+ *
+ * 只按**年份差**算（deathYear − birthYear），月日不参与——
+ * 这是族谱里最常见的口径（周岁），也避免了「知道月日才敢算」的依赖。
+ * 卒年早于生年视为数据有误，返回 null 而不是负数。
+ */
+export function lifespanOf(person: Person): number | null {
+  const birth = Number(person.birthYear);
+  const death = Number(person.deathYear);
+  if (!person.birthYear || !person.deathYear) return null;
+  if (!Number.isFinite(birth) || !Number.isFinite(death)) return null;
+  const years = death - birth;
+  return years >= 0 ? years : null;
+}
+
+/**
  * 把任意写法收敛成严格 4 位年份。
  *
  * 「约1950」→「1950」：抽得出年份就保留年份，只丢掉「约」这个修饰，
