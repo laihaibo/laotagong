@@ -78,9 +78,12 @@ const THEME_META: Record<ThemeMode, { label: string; icon: typeof Sun }> = {
 };
 
 /**
- * 应用标识：一位先祖，向下延出两支。
+ * 应用标识：世系分支 —— 一位先祖，向四方延出后代。
  * 用 CSS 变量取色，因此浅色/深色主题下自动跟随。
- * （与 app/icon.svg 同构，那份是 favicon，不能用 var()。）
+ * （与 app/icon.svg 同构；那份是 favicon，不能用 var()，所以颜色写死。）
+ *
+ * 几何是为小尺寸调的：三条线加粗、端点加大、最外两条张开角度拉大，
+ * 免得 16px 时四条线糊成一团。
  */
 function AppMark({ className }: { className?: string }) {
   return (
@@ -92,33 +95,29 @@ function AppMark({ className }: { className?: string }) {
       fill="none"
     >
       <defs>
-        <linearGradient id="appmark-lg" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id="appmark-lg" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--accent)" />
           <stop offset="100%" stopColor="var(--accent-2)" />
         </linearGradient>
       </defs>
-      <rect
-        x="2.75"
-        y="2.75"
-        width="58.5"
-        height="58.5"
-        rx="15"
-        stroke="url(#appmark-lg)"
-        strokeOpacity="0.28"
-        strokeWidth="2.5"
-      />
       <g
         stroke="url(#appmark-lg)"
-        strokeWidth="4"
+        strokeWidth="3.2"
         strokeLinecap="round"
-        strokeLinejoin="round"
+        opacity="0.6"
       >
-        <path d="M32 23.5 V32" />
-        <path d="M18.5 39.5 V32 H45.5 V39.5" />
+        <path d="M32 20 L13 45" />
+        <path d="M32 20 L25.5 49" />
+        <path d="M32 20 L38.5 49" />
+        <path d="M32 20 L51 45" />
       </g>
-      <circle cx="32" cy="17" r="7" fill="url(#appmark-lg)" />
-      <circle cx="18.5" cy="45.5" r="6" fill="url(#appmark-lg)" opacity="0.72" />
-      <circle cx="45.5" cy="45.5" r="6" fill="url(#appmark-lg)" opacity="0.72" />
+      <circle cx="32" cy="15" r="7.5" fill="url(#appmark-lg)" />
+      <g fill="url(#appmark-lg)" opacity="0.85">
+        <circle cx="13" cy="47" r="5" />
+        <circle cx="25.5" cy="51" r="5" />
+        <circle cx="38.5" cy="51" r="5" />
+        <circle cx="51" cy="47" r="5" />
+      </g>
     </svg>
   );
 }

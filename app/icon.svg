@@ -1,30 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="老太公 · 家族图谱">
   <title>老太公 · 家族图谱</title>
   <defs>
-    <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="55%" stop-color="#0284c7"/>
       <stop offset="100%" stop-color="#7c3aed"/>
-    </linearGradient>
-    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.96"/>
-      <stop offset="100%" stop-color="#e8eef7" stop-opacity="1"/>
     </linearGradient>
   </defs>
 
-  <!-- iOS 风格圆角底板（玻璃质感：上亮下暗 + 描边） -->
-  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#tile)"/>
-  <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="14.25"
-        fill="none" stroke="url(#lg)" stroke-width="1.5" opacity="0.35"/>
-
-  <!-- 谱系：一位先祖，向下延出两支 -->
-  <g fill="none" stroke="url(#lg)" stroke-width="3"
-     stroke-linecap="round" stroke-linejoin="round">
-    <path d="M32 23.5 V32"/>
-    <path d="M18.5 39.5 V32 H45.5 V39.5"/>
+  <!-- 世系分支：一位先祖，向四方延出后代 -->
+  <g stroke="url(#lg)" stroke-width="3.2" stroke-linecap="round" opacity="0.6">
+    <path d="M32 20 L13 45"/>
+    <path d="M32 20 L25.5 49"/>
+    <path d="M32 20 L38.5 49"/>
+    <path d="M32 20 L51 45"/>
   </g>
 
-  <circle cx="32" cy="17" r="6.5" fill="url(#lg)"/>
-  <circle cx="18.5" cy="45.5" r="5.5" fill="url(#lg)" opacity="0.78"/>
-  <circle cx="45.5" cy="45.5" r="5.5" fill="url(#lg)" opacity="0.78"/>
+  <circle cx="32" cy="15" r="7.5" fill="url(#lg)"/>
+  <g fill="url(#lg)" opacity="0.85">
+    <circle cx="13" cy="47" r="5"/>
+    <circle cx="25.5" cy="51" r="5"/>
+    <circle cx="38.5" cy="51" r="5"/>
+    <circle cx="51" cy="47" r="5"/>
+  </g>
 </svg>
