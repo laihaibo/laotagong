@@ -11,6 +11,7 @@ import {
   Home,
   Monitor,
   Moon,
+  Network,
   Plus,
   Search,
   Sun,
@@ -31,6 +32,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
+  type AmbiguousLink,
   type EventType,
   type FamilyEvent,
   type FamilyState,
@@ -39,6 +41,8 @@ import {
   type RelationKind,
   type WufuResult,
   EVENT_TYPES,
+  applyRepairs,
+  findRepairableLinks,
   wufuOf,
   zodiacOf,
   addParentLink,
@@ -131,17 +135,34 @@ export function FamilyApp() {
   const [toast, setToast] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  /** 有多位配偶候选、无法自动确定的缺失双亲；等用户逐条指定 */
+  const [ambiguous, setAmbiguous] = useState<AmbiguousLink[]>([]);
+  const [ambiguousOpen, setAmbiguousOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loaded = loadState();
-    setState(loaded);
-    setFocusId(loaded.meId ?? firstPersonId(loaded));
+
+    // 存量数据修复：写入路径的对称回填只作用于「新建」的关系，
+    // 修复之前留下的单亲子女不会被追溯。这里在载入时补一次，
+    // 且只补无歧义的（已绑定的那位家长恰好只有 1 位配偶）；
+    // 有歧义的（≥ 2 位配偶）不猜，交给用户逐条指定。
+    const { repairable, ambiguous: unresolved } = findRepairableLinks(loaded);
+    const repaired = repairable.length > 0 ? applyRepairs(loaded, repairable) : loaded;
+
+    setState(repaired);
+    setFocusId(repaired.meId ?? firstPersonId(repaired));
     const mode = loadThemeMode();
     setThemeMode(mode);
     applyTheme(resolveTheme(mode));
     setHydrated(true);
+
+    if (repairable.length > 0) {
+      setToast(`已修复 ${repairable.length} 处缺失的双亲关系`);
+    }
+    if (unresolved.length > 0) setAmbiguous(unresolved);
   }, []);
 
   useEffect(() => {
@@ -301,6 +322,26 @@ export function FamilyApp() {
     setToast("已清空");
   }, []);
 
+  /** 用户为某个子女显式指定了缺失的那一端双亲 */
+  const resolveAmbiguous = useCallback(
+    (index: number, spouseId: string) => {
+      setAmbiguous((list) => {
+        const item = list[index];
+        if (item) {
+          setState((s) => addParentLink(s, item.childId, spouseId, item.role));
+          setToast("已指定");
+        }
+        return list.filter((_, i) => i !== index);
+      });
+    },
+    []
+  );
+
+  /** 用户选择「暂不指定」——只是不再提示，不写任何数据 */
+  const dismissAmbiguous = useCallback((index: number) => {
+    setAmbiguous((list) => list.filter((_, i) => i !== index));
+  }, []);
+
   if (!hydrated) {
     return (
       <div className="flex min-h-dvh items-center justify-center">
@@ -330,6 +371,15 @@ export function FamilyApp() {
               variant="ghost"
               size="icon-sm"
               data-header-item
+              onClick={() => setOverviewOpen(true)}
+              title="全族总览"
+            >
+              <Network className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-header-item
               onClick={() => setSearchOpen(true)}
               title="查找"
             >
@@ -348,6 +398,25 @@ export function FamilyApp() {
           </div>
         </div>
       </header>
+
+      {/* 有多位配偶候选、无法自动确定缺失双亲时提示。不写数据，等用户逐条指定。 */}
+      {ambiguous.length > 0 && (
+        <div className="w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--accent-soft)]">
+          <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
+            <p className="text-caption text-[var(--ink-soft)]">
+              发现 {ambiguous.length} 处缺失的双亲无法自动确定（该家长有多位配偶）
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setAmbiguousOpen(true)}
+            >
+              逐条指定
+            </Button>
+          </div>
+        </div>
+      )}
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-6 pt-5 sm:px-6 lg:max-w-5xl lg:px-8">
 
@@ -488,6 +557,77 @@ export function FamilyApp() {
         </SheetContent>
       </Sheet>
 
+      {/* 全族总览 */}
+      <Sheet open={overviewOpen} onOpenChange={setOverviewOpen}>
+        <SheetContent side="responsive" className="lg:max-w-3xl">
+          <SheetHeader>
+            <SheetTitle>全族总览</SheetTitle>
+            <SheetDescription>
+              共 {Object.keys(state.persons).length} 位成员，按代际分层。点任意一人即可定心。
+            </SheetDescription>
+          </SheetHeader>
+          <OverviewPanel
+            state={state}
+            onSelect={(id) => {
+              setFocusId(id);
+              setOverviewOpen(false);
+            }}
+          />
+        </SheetContent>
+      </Sheet>
+
+      {/* 有多位候选的缺失双亲，逐条指定 */}
+      <Sheet open={ambiguousOpen} onOpenChange={setAmbiguousOpen}>
+        <SheetContent side="responsive">
+          <SheetHeader>
+            <SheetTitle>指定缺失的双亲</SheetTitle>
+            <SheetDescription>
+              以下子女缺一端双亲，而该家长有多位配偶，无法自动确定
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
+            {ambiguous.length === 0 ? (
+              <p className="py-6 text-center text-caption text-[var(--ink-faint)]">
+                没有待指定的关系
+              </p>
+            ) : (
+              ambiguous.map((item, index) => (
+                <div
+                  key={`${item.childId}-${item.role}`}
+                  className="rounded-2xl border border-[var(--glass-border)] p-3"
+                >
+                  <p className="text-body text-[var(--ink)]">
+                    {state.persons[item.childId]?.name ?? item.childId}
+                    <span className="ml-2 text-caption text-[var(--ink-faint)]">
+                      缺{item.role === "father" ? "父" : "母"}
+                    </span>
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {item.candidates.map((candidateId) => (
+                      <Button
+                        key={candidateId}
+                        variant="outline"
+                        size="sm"
+                        onClick={() => resolveAmbiguous(index, candidateId)}
+                      >
+                        {state.persons[candidateId]?.name ?? candidateId}
+                      </Button>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => dismissAmbiguous(index)}
+                    >
+                      暂不指定
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
       <input
         ref={fileRef}
         type="file"
@@ -565,6 +705,81 @@ function ThemeCycleButton({
     >
       <Icon className="h-4 w-4" />
     </Button>
+  );
+}
+
+/* ───────── Family Overview ───────── */
+
+/**
+ * 全族总览：按关系距离分层，每代一行。
+ *
+ * 复用 groupByRelationDistance —— 层次信息本来就是运行时推导出来的，
+ * 这里不需要新的布局算法，只是换个画法。
+ */
+function OverviewPanel({
+  state,
+  onSelect,
+}: {
+  state: FamilyState;
+  onSelect: (id: string) => void;
+}) {
+  const groups = useMemo(() => groupByRelationDistance(state), [state]);
+
+  return (
+    <div
+      data-overview-root
+      className="min-h-0 flex-1 overflow-auto pb-2"
+    >
+      <div className="flex min-w-max flex-col items-center gap-0 px-1">
+        {groups.map((group, groupIndex) => (
+          <div key={group.key} className="flex flex-col items-center">
+            {groupIndex > 0 && (
+              <div className="h-5 w-px shrink-0 bg-[var(--glass-edge)]" />
+            )}
+            <p className="mb-1.5 text-caption text-[var(--ink-faint)]">
+              {group.label} · {group.ids.length}
+            </p>
+            <div className="flex items-start gap-2">
+              {group.ids.map((id) => {
+                const person = state.persons[id];
+                if (!person) return null;
+                const hasChildren = getChildrenIds(state, id).length > 0;
+                return (
+                  <div key={id} className="flex flex-col items-center">
+                    <button
+                      type="button"
+                      data-overview-node
+                      onClick={() => onSelect(id)}
+                      title={person.name}
+                      className={cn(
+                        "flex w-[76px] flex-col items-center gap-1 rounded-2xl border px-2 py-1.5 transition-colors",
+                        state.meId === id
+                          ? "border-[var(--me-ring)] bg-[var(--accent-soft)]"
+                          : "border-[var(--glass-border)] hover:bg-[var(--glass-strong)]"
+                      )}
+                    >
+                      <Avatar person={person} size="sm" />
+                      <span className="w-full truncate text-center text-caption text-[var(--ink)]">
+                        {person.name}
+                      </span>
+                    </button>
+                    {/* 有后代的人向下引一小段线，读起来像世系 */}
+                    {hasChildren && (
+                      <div className="h-3 w-px shrink-0 bg-[var(--glass-edge)]" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        {groups.length === 0 && (
+          <p className="py-10 text-center text-caption text-[var(--ink-faint)]">
+            还没有成员
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 

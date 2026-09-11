@@ -349,3 +349,73 @@ describe("sanitize 往返不丢字段", () => {
     expect(state.parents).toEqual({});
   });
 });
+
+describe("存量数据修复 · 把父亲设为「我」后奶奶必须可见", () => {
+  /** 修复前留下的形态：配偶关系存在，但子女那一端从未回填 */
+  function staleData(): FamilyState {
+    const base = seed([
+      ["G", "male"],
+      ["N", "female"],
+      ["F", "male"],
+      ["ME", "male"],
+    ]);
+    return {
+      ...base,
+      parents: {
+        F: { fatherId: "G" }, // ← 爷爷在，奶奶丢了
+        ME: { fatherId: "F" },
+      },
+      spouses: [{ a: "G", b: "N" }], // 配偶关系其实是有的
+      meId: "F",
+    };
+  }
+
+  it("载入时无歧义的那部分会被自动补上", () => {
+    const before = staleData();
+    expect(getMotherId(before, "F")).toBeNull();
+
+    const { repairable, ambiguous } = findRepairableLinks(before);
+    expect(repairable).toHaveLength(1);
+    expect(repairable[0]).toEqual({ childId: "F", spouseId: "N", role: "mother" });
+    expect(ambiguous).toHaveLength(0);
+
+    const after = applyRepairs(before, repairable);
+    // 这就是用户报的现象：父亲设为「我」后，奶奶应当作为「母亲」出现
+    expect(getMotherId(after, "F")).toBe("N");
+    expect(getFatherId(after, "F")).toBe("G");
+  });
+
+  it("修复后 ME 的祖辈也在位，切到上一代不会丢人", () => {
+    const repaired = applyRepairs(staleData(), findRepairableLinks(staleData()).repairable);
+    // ME 先把父亲 F 设为「我」，再切上一代 → 应看到爷爷和奶奶两人
+    const fatherOfMe = getFatherId(repaired, "ME");
+    expect(fatherOfMe).toBe("F");
+    expect(getFatherId(repaired, fatherOfMe as string)).toBe("G");
+    expect(getMotherId(repaired, fatherOfMe as string)).toBe("N");
+  });
+
+  it("修复是幂等的：再次载入不会重复写或报错", () => {
+    const once = applyRepairs(staleData(), findRepairableLinks(staleData()).repairable);
+    const { repairable } = findRepairableLinks(once);
+    expect(repairable).toHaveLength(0);
+    expect(applyRepairs(once, repairable)).toEqual(once);
+  });
+
+  it("有 ≥2 位配偶时不自动写，进 ambiguous 等用户指定", () => {
+    const base = staleData();
+    const withTwo: FamilyState = {
+      ...base,
+      persons: { ...base.persons, N2: createPerson({ id: "N2", name: "N2", gender: "female", createdAt: 1 }) },
+      spouses: [
+        { a: "G", b: "N" },
+        { a: "G", b: "N2" },
+      ],
+    };
+    const { repairable, ambiguous } = findRepairableLinks(withTwo);
+    expect(repairable).toHaveLength(0);
+    expect(ambiguous).toHaveLength(1);
+    expect(ambiguous[0].candidates.sort()).toEqual(["N", "N2"]);
+    // 未经用户指定之前，绝不写入
+    expect(getMotherId(withTwo, "F")).toBeNull();
+  });
+});
