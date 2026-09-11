@@ -429,7 +429,7 @@ export function FamilyApp() {
       {/* Footer — 100% 宽度。数据输入输出与危险操作都在这里，header 保持干净。 */}
       <footer className="w-full shrink-0 border-t border-[var(--glass-edge)] bg-[var(--bg-0)]/60 backdrop-blur-xl">
         <div className="mx-auto w-full max-w-5xl px-4 py-3 text-center sm:px-6 lg:px-8">
-          <p className="text-caption text-[var(--ink-faint)]">2026 laiha</p>
+          <p className="text-caption text-[var(--ink-faint)]">© 2026 Laiha 版权所有</p>
         </div>
       </footer>
 
