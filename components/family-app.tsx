@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Crown,
@@ -30,10 +31,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
+  type EventType,
+  type FamilyEvent,
   type FamilyState,
   type Gender,
   type Person,
   type RelationKind,
+  EVENT_TYPES,
   addParentLink,
   addSpouseLink,
   areSpouses,
@@ -1073,6 +1077,130 @@ function PersonCard({
   );
 }
 
+/* ───────── Family Events ───────── */
+
+const EVENT_LABELS: Record<EventType, string> = {
+  marriage: "婚嫁",
+  migration: "迁徙",
+  birth: "出生",
+  death: "离世",
+  education: "褒学",
+  custom: "其他",
+};
+
+/**
+ * 生平事件编辑器。默认折叠——事件只在编辑面板里出现，
+ * 不放到卡片正面，否则锚点卡片会被塞爆（AC-31）。
+ */
+function FamilyEventList({
+  events,
+  onChange,
+}: {
+  events: FamilyEvent[];
+  onChange: (next: FamilyEvent[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const update = (id: string, patch: Partial<FamilyEvent>) =>
+    onChange(events.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+
+  const add = () =>
+    onChange([
+      ...events,
+      {
+        id: crypto.randomUUID(),
+        type: "custom",
+        date: "",
+        place: "",
+        note: "",
+      },
+    ]);
+
+  const remove = (id: string) => onChange(events.filter((e) => e.id !== id));
+
+  return (
+    <div className="space-y-2 rounded-2xl border border-[var(--glass-border)] bg-[var(--glass)] p-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between text-left"
+      >
+        <span className="text-body font-medium text-[var(--ink)]">家族事件</span>
+        <span className="flex items-center gap-2 text-caption text-[var(--ink-faint)]">
+          {events.length > 0 && <span>{events.length} 条</span>}
+          <ChevronDown
+            className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
+          />
+        </span>
+      </button>
+
+      {open && (
+        <div className="space-y-3 pt-1">
+          {events.length === 0 && (
+            <p className="text-caption text-[var(--ink-faint)]">
+              还没有记录。可以记婚嫁、迁徙、褒学等。
+            </p>
+          )}
+          {events.map((ev) => (
+            <div
+              key={ev.id}
+              className="space-y-2 rounded-xl border border-[var(--glass-edge)] p-2.5"
+            >
+              <div className="flex items-center gap-2">
+                <select
+                  value={ev.type}
+                  onChange={(e) =>
+                    update(ev.id, { type: e.target.value as EventType })
+                  }
+                  aria-label="事件类型"
+                  className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass)] px-2 py-1 text-caption text-[var(--ink)]"
+                >
+                  {EVENT_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {EVENT_LABELS[t]}
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  value={ev.date}
+                  onChange={(e) => update(ev.id, { date: e.target.value })}
+                  placeholder="时间，如：约1950"
+                  className="h-8 flex-1"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => remove(ev.id)}
+                  title="删除事件"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <Input
+                value={ev.place ?? ""}
+                onChange={(e) => update(ev.id, { place: e.target.value })}
+                placeholder="地点（可选）"
+                className="h-8"
+              />
+              <Input
+                value={ev.note ?? ""}
+                onChange={(e) => update(ev.id, { note: e.target.value })}
+                placeholder="备注（可选）"
+                className="h-8"
+              />
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={add}>
+            <Plus className="h-3.5 w-3.5" />
+            新增事件
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ───────── Edit Sheet ───────── */
 
 function PersonEditSheet({
@@ -1191,6 +1319,22 @@ function PersonEditSheet({
               maxLength={100}
             />
           </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="p-photo">照片链接</Label>
+            <Input
+              id="p-photo"
+              placeholder="https://… 外置图片地址（可留空）"
+              value={draft.photoUrl ?? ""}
+              onChange={(e) => set("photoUrl", e.target.value)}
+              inputMode="url"
+            />
+          </div>
+
+          <FamilyEventList
+            events={draft.events ?? []}
+            onChange={(next) => set("events", next)}
+          />
         </div>
 
         <div className="flex flex-col gap-2 pt-1">
