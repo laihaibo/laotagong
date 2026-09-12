@@ -178,11 +178,13 @@ export function FamilyTree({
     }
 
     if (panOrigin.current) {
-      setView((v) => ({
-        ...v,
-        x: panOrigin.current!.vx + (event.clientX - panOrigin.current!.x),
-        y: panOrigin.current!.vy + (event.clientY - panOrigin.current!.y),
-      }));
+      // 先把值取出来。updater 不会立刻执行——React 留到渲染阶段才调用它，
+      // 而那时 pointerup 可能已经把 panOrigin 置空，
+      // 在 updater 里读 ref 就是 null.vx。
+      const origin = panOrigin.current;
+      const dx = event.clientX - origin.x;
+      const dy = event.clientY - origin.y;
+      setView((v) => ({ ...v, x: origin.vx + dx, y: origin.vy + dy }));
     }
   };
 

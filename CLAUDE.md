@@ -209,6 +209,22 @@ spouses = [{a, b}]                        ← 婚姻边（可选、独立）
 
 推论：写任何「读/写浏览器 API」的代码时，先问一句「它会不会抛」，会就把异常接住。
 
+### 绝不在 state updater 里读 ref
+
+**这条把整页打崩过。** 原写法：
+
+```tsx
+setView((v) => ({ ...v, x: panOrigin.current!.vx + dx }));   // ← null.vx
+```
+
+updater **不会立刻执行**。`pointermove` 是连续事件，React 会推迟它；
+而 `pointerup` 已经把 `panOrigin.current` 置成 `null`。
+于是 updater 真正跑的时候读的是 null —— 抬手那一瞬间必崩。
+
+**规则：调用 `setX(updater)` 之前，先把要用的值取成局部常量，让 updater 成为纯函数。**
+回归测试在 `test/tree-canvas.test.tsx`，**已验证把 bug 放回去它就会红**——
+测试写完必须这样反向验一次，否则可能是一条空转的绿。
+
 ### 画布性能：平移不要重渲染节点
 
 `TreeScene` 单独抽出来并 `memo`。平移/缩放只改外层 div 的 `transform`，
@@ -307,13 +323,20 @@ jsdom 能测：数据往返、DOM 结构、事件流、localStorage 键卫生、
 jsdom **不能**测：`backdrop-filter`、`getComputedStyle` 的像素值、断点切换、真实对比度。
 这些必须人工在浏览器里看。
 
-写测试时的两条经验：
+写测试时的三条经验：
 
 1. **用固定 id 的裸 JSON fixture 复现坏数据**，不要用构造器造样本。
    构造器造出来的数据复现不了 load/write 路径的 bug。
 2. **断言前先确认集合非空。** 曾经有一条「任何卡片都不含事件文本」的断言，
    在卡片属性还没被创建时**恒真**——绿着通过，而功能是坏的。
    空集合上的全称命题没有意义。
+3. **写完回归测试，把 bug 放回去验一次它会红。** 复现不了原 bug 的测试
+   是负资产：它给人已经守住了的错觉。
+
+组件交互测试用 React 自带的 `act` + `createRoot`，不需要 @testing-library。
+注意两件事：`globalThis.IS_REACT_ACT_ENVIRONMENT = true`；
+以及 jsdom 的 `MouseEvent.clientX` 是**只读**的（`Object.assign` 会抛），
+坐标必须走构造函数、`pointerId` 用 `Object.defineProperty` 挂。
 
 ## 部署
 

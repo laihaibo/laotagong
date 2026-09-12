@@ -9,7 +9,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.{ts,tsx}"],
     // Steps 0/0b land the runner before the first spec exists (Step 1);
     // without this the bare-runner gate would be red by construction.
     passWithNoTests: true,
