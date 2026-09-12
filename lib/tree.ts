@@ -19,10 +19,10 @@ import {
  */
 
 /** 单个人物格子的尺寸 */
-export const NODE_W = 176;
-export const NODE_H = 88;
-/** 同代相邻单元的水平间距 */
-const H_GAP = 24;
+export const NODE_W = 208;
+export const NODE_H = 132;
+/** 同代相邻单元的最小水平间距 */
+const H_GAP = 28;
 /** 单元内部成员（夫妻）的间距 */
 const SPOUSE_GAP = 10;
 /** 代际之间的垂直间距 */
@@ -147,26 +147,32 @@ export function layoutFamilyTree(state: FamilyState): TreeLayout {
     }
   }
 
-  // 后序：叶子依次占列，父节点居中于子节点
-  const columnOf = new Map<string, number>();
-  let nextColumn = 0;
+  /** 单元的实际宽度：夫妻是两个人并排 */
+  const widthOf = (unit: string): number => {
+    const members = membersOf.get(unit) as string[];
+    return members.length * NODE_W + (members.length - 1) * SPOUSE_GAP;
+  };
+
+  // 后序：叶子依次占位，父节点居中于子节点 —— 得到的是「理想中心」（像素）
+  const idealCenterOf = new Map<string, number>();
+  let nextSlot = 0;
 
   const assign = (unit: string, seen: Set<string>): number => {
-    if (columnOf.has(unit)) return columnOf.get(unit) as number;
-    if (seen.has(unit)) return nextColumn; // 数据成环时兜底，不递归
+    if (idealCenterOf.has(unit)) return idealCenterOf.get(unit) as number;
+    if (seen.has(unit)) return nextSlot * (NODE_W + H_GAP); // 数据成环时兜底
     seen.add(unit);
 
     const children = childrenUnitsOf.get(unit) ?? [];
-    let column: number;
+    let center: number;
     if (children.length === 0) {
-      column = nextColumn;
-      nextColumn += 1;
+      center = nextSlot * (NODE_W + H_GAP) + widthOf(unit) / 2;
+      nextSlot += 1;
     } else {
-      const childColumns = children.map((c) => assign(c, seen));
-      column = (Math.min(...childColumns) + Math.max(...childColumns)) / 2;
+      const childCenters = children.map((c) => assign(c, seen));
+      center = (Math.min(...childCenters) + Math.max(...childCenters)) / 2;
     }
-    columnOf.set(unit, column);
-    return column;
+    idealCenterOf.set(unit, center);
+    return center;
   };
 
   const roots = [...membersOf.keys()]
@@ -178,6 +184,48 @@ export function layoutFamilyTree(state: FamilyState): TreeLayout {
       return byBirthThenId(state, membersOf.get(a)?.[0] ?? "", membersOf.get(b)?.[0] ?? "");
     });
   for (const root of roots) assign(root, new Set());
+
+  /**
+   * 从左到右扫掠，强制同代不重叠。
+   *
+   * 只靠「理想中心」是不够的：列间距是按**一个人**的宽度算的，
+   * 而夫妻单元是**两个人**并排。于是「一对夫妻紧挨着一个单人」必然压在一起。
+   * 这里按实际宽度依次排队，理想位置让位于「不重叠」。
+   */
+  const sweepRow = (units: string[]): Map<string, number> => {
+    const placed = new Map<string, number>();
+    const sorted = [...units].sort(
+      (a, b) => (idealCenterOf.get(a) ?? 0) - (idealCenterOf.get(b) ?? 0)
+    );
+    let rightEdge = Number.NEGATIVE_INFINITY;
+    for (const unit of sorted) {
+      const half = widthOf(unit) / 2;
+      const ideal = idealCenterOf.get(unit) ?? 0;
+      const center = Math.max(ideal, rightEdge + H_GAP + half);
+      placed.set(unit, center);
+      rightEdge = center + half;
+    }
+    return placed;
+  };
+
+  const connectedByGeneration = new Map<number, string[]>();
+  for (const unit of membersOf.keys()) {
+    const generation = generationOf.get(unit);
+    if (!Number.isFinite(generation)) continue;
+    const list = connectedByGeneration.get(generation as number) ?? [];
+    list.push(unit);
+    connectedByGeneration.set(generation as number, list);
+  }
+  const centerOf = new Map<string, number>();
+  for (const units of connectedByGeneration.values()) {
+    for (const [unit, center] of sweepRow(units)) centerOf.set(unit, center);
+  }
+  // 不连通的人自成一行，同样做一次扫掠
+  const orphanUnits = [...membersOf.keys()].filter(
+    (unit) => !Number.isFinite(generationOf.get(unit))
+  );
+  for (const [unit, center] of sweepRow(orphanUnits)) centerOf.set(unit, center);
+
 
   const nodes: TreeLayoutNode[] = [];
   const byId = new Map<string, TreeLayoutNode>();
@@ -192,9 +240,9 @@ export function layoutFamilyTree(state: FamilyState): TreeLayout {
 
   const place = (unit: string, baseY: number) => {
     const members = membersOf.get(unit) as string[];
-    const column = columnOf.get(unit) ?? 0;
-    const unitWidth = members.length * NODE_W + (members.length - 1) * SPOUSE_GAP;
-    const startX = column * (NODE_W + H_GAP + SPOUSE_GAP) - unitWidth / 2;
+    const center = centerOf.get(unit) ?? 0;
+    const unitWidth = widthOf(unit);
+    const startX = center - unitWidth / 2;
     members.forEach((id, index) => {
       const node: TreeLayoutNode = {
         id,
@@ -225,9 +273,9 @@ export function layoutFamilyTree(state: FamilyState): TreeLayout {
       : 0) + ORPHAN_GAP;
   for (const unit of orphans) {
     const members = membersOf.get(unit) as string[];
-    const column = columnOf.get(unit) ?? 0;
-    const unitWidth = members.length * NODE_W + (members.length - 1) * SPOUSE_GAP;
-    const startX = column * (NODE_W + H_GAP + SPOUSE_GAP) - unitWidth / 2;
+    const center = centerOf.get(unit) ?? 0;
+    const unitWidth = widthOf(unit);
+    const startX = center - unitWidth / 2;
     members.forEach((id, index) => {
       const node: TreeLayoutNode = {
         id,

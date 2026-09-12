@@ -173,3 +173,165 @@ describe("享年", () => {
     expect(lifespanOf(createPerson({ id: "a", birthYear: "2000", deathYear: "2000" }))).toBe(0);
   });
 });
+
+describe("同代不重叠 · 夫妻单元与单人相邻", () => {
+  /**
+   * 这是用户实际撞到的形态：一代里既有「两个人并排的夫妻单元」，
+   * 又有「单人单元」。
+   *
+   * 旧的列间距按**一个人**的宽度算，于是夫妻单元（两倍宽）会直接压到
+   * 旁边那个单人身上。原 fixture 里每一代宽度都一致，所以照不出来。
+   */
+  function coupleNextToSingle(): FamilyState {
+    const persons: Record<string, Person> = {};
+    for (const id of ["A", "B", "C", "D", "E"]) {
+      persons[id] = person(id, id === "B" || id === "D" ? "female" : "male");
+    }
+    return {
+      version: 1,
+      persons,
+      parents: {
+        C: { fatherId: "A", motherId: "B" },
+        E: { fatherId: "A", motherId: "B" },
+      },
+      spouses: [
+        { a: "A", b: "B" }, // 祖父母：夫妻单元
+        { a: "C", b: "D" }, // 长子已婚：又一个夫妻单元，与单人 E 同代
+      ],
+      meId: "C",
+    };
+  }
+
+  const layout = layoutFamilyTree(coupleNextToSingle());
+
+  it("同代任意两个格子都不重叠（含跨单元）", () => {
+    const rows = new Map<number, Array<{ id: string; x: number; width: number }>>();
+    for (const node of layout.nodes) {
+      const row = rows.get(node.y) ?? [];
+      row.push({ id: node.id, x: node.x, width: node.width });
+      rows.set(node.y, row);
+    }
+    for (const row of rows.values()) {
+      row.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < row.length; i += 1) {
+        const gap = row[i].x - (row[i - 1].x + row[i - 1].width);
+        expect(gap, `${row[i - 1].id} 与 ${row[i].id} 重叠了`).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it("夫妻单元确实比单人宽（否则这条测试本身就是空的）", () => {
+    const c = layout.byId.get("C")!;
+    const d = layout.byId.get("D")!;
+    const e = layout.byId.get("E")!;
+    // C 与 D 是夫妻，两人并排的总宽度必然大于单人
+    expect(d.x + d.width - c.x).toBeGreaterThan(e.width);
+  });
+
+  it("C 与 D 相邻，且 C 与 E 之间留出了间距", () => {
+    const c = layout.byId.get("C")!;
+    const d = layout.byId.get("D")!;
+    const e = layout.byId.get("E")!;
+    expect(d.x).toBeGreaterThan(c.x);
+    expect(e.x).toBeGreaterThanOrEqual(Math.max(d.x + d.width, c.x + c.width));
+  });
+});
+
+describe("任意两个格子都不得相交（含跨代）", () => {
+  function rect(o: { x: number; y: number; width: number; height: number }) {
+    return { l: o.x, r: o.x + o.width, t: o.y, b: o.y + o.height };
+  }
+  function intersects(
+    a: { x: number; y: number; width: number; height: number },
+    b: { x: number; y: number; width: number; height: number }
+  ) {
+    const A = rect(a);
+    const B = rect(b);
+    return A.l < B.r && B.l < A.r && A.t < B.b && B.t < A.b;
+  }
+  function assertNoIntersection(state: FamilyState, label: string) {
+    const layout = layoutFamilyTree(state);
+    for (let i = 0; i < layout.nodes.length; i += 1) {
+      for (let j = i + 1; j < layout.nodes.length; j += 1) {
+        const a = layout.nodes[i];
+        const b = layout.nodes[j];
+        expect(
+          intersects(a, b),
+          `${label}：${a.id}(y=${a.y}) 与 ${b.id}(y=${b.y}) 相交`
+        ).toBe(false);
+      }
+    }
+  }
+
+  it("三代 + 夫妻 + 兄弟姐妹", () => {
+    assertNoIntersection(family(), "三代");
+  });
+
+  it("夫妻单元与单人同代", () => {
+    const persons: Record<string, Person> = {};
+    for (const id of ["A", "B", "C", "D", "E"]) {
+      persons[id] = createPerson({ id, name: id, gender: "male", createdAt: 1 });
+    }
+    assertNoIntersection(
+      {
+        version: 1,
+        persons,
+        parents: { C: { fatherId: "A", motherId: "B" }, E: { fatherId: "A", motherId: "B" } },
+        spouses: [{ a: "A", b: "B" }, { a: "C", b: "D" }],
+        meId: "C",
+      },
+      "夫妻+单人"
+    );
+  });
+
+  it("四代 + 多个夫妻单元 + 未连通的人", () => {
+    const persons: Record<string, Person> = {};
+    const ids = ["G1", "G2", "P1", "P2", "P3", "P4", "M1", "M2", "M3", "K1", "K2", "XX"];
+    for (const id of ids) {
+      persons[id] = createPerson({ id, name: id, gender: "male", birthYear: "1950", createdAt: 1 });
+    }
+    assertNoIntersection(
+      {
+        version: 1,
+        persons,
+        parents: {
+          P1: { fatherId: "G1", motherId: "G2" },
+          P3: { fatherId: "G1", motherId: "G2" },
+          M1: { fatherId: "P1", motherId: "P2" },
+          M3: { fatherId: "P3", motherId: "P4" },
+          K1: { fatherId: "M1", motherId: "M2" },
+          K2: { fatherId: "M3" },
+        },
+        spouses: [
+          { a: "G1", b: "G2" },
+          { a: "P1", b: "P2" },
+          { a: "P3", b: "P4" },
+          { a: "M1", b: "M2" },
+        ],
+        meId: "M1",
+      },
+      "四代"
+    );
+  });
+
+  it("同一个人既被当作配偶又被当作血亲（可能跨代）", () => {
+    // 远亲结婚这类数据会让一个单元里的两人落在不同代际
+    const persons: Record<string, Person> = {};
+    for (const id of ["ME", "F", "M", "COUSIN", "WIFE"]) {
+      persons[id] = createPerson({ id, name: id, gender: "male", createdAt: 1 });
+    }
+    assertNoIntersection(
+      {
+        version: 1,
+        persons,
+        parents: {
+          ME: { fatherId: "F", motherId: "M" },
+          COUSIN: { fatherId: "F" },
+        },
+        spouses: [{ a: "F", b: "M" }, { a: "ME", b: "COUSIN" }],
+        meId: "ME",
+      },
+      "跨代配偶"
+    );
+  });
+});

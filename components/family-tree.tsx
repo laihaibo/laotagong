@@ -411,34 +411,36 @@ const TreeScene = memo(function TreeScene({
 
                 {/* 三个动作竖排在卡片右侧：增加关系 / 详情 / 设为「我」
                     必须 onPointerDown 阻止冒泡，否则会顺手把画布拖起来 */}
+                {/* 每个按钮 44×44 —— Apple 的最小点击区。
+                    挤在一起必然误触，宁可把卡片做大。 */}
                 <div
-                  className="flex shrink-0 flex-col items-center justify-center gap-0.5 border-l border-[var(--glass-edge)] px-0.5"
+                  className="flex w-11 shrink-0 flex-col border-l border-[var(--glass-edge)]"
                   onPointerDown={(e) => e.stopPropagation()}
                 >
                   <button
                     type="button"
                     onClick={() => onAddRelation(node.id)}
                     title="增加关系"
-                    className="rounded-lg p-1 text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
+                    className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
                   >
-                    <UserPlus className="h-3.5 w-3.5" />
+                    <UserPlus className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
                     onClick={() => onOpenPerson(node.id)}
                     title="详情"
-                    className="rounded-lg p-1 text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
+                    className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
                   >
-                    <Info className="h-3.5 w-3.5" />
+                    <Info className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
                     onClick={() => onSetMe(node.id)}
                     disabled={isMe}
                     title="设为「我」"
-                    className="rounded-lg p-1 text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--accent)] disabled:opacity-30"
+                    className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--accent)] disabled:opacity-30"
                   >
-                    <Crown className="h-3.5 w-3.5" />
+                    <Crown className="h-4 w-4" />
                   </button>
                 </div>
               </div>
