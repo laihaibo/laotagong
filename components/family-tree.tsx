@@ -379,6 +379,11 @@ const TreeScene = memo(function TreeScene({
                 key={node.id}
                 data-tree-node
                 style={{
+                  // position 必须内联：.glass-card 里未分层的 position:relative
+                  // 在级联上压过 @layer utilities 里的 absolute 工具类
+                  // （未分层样式优先于一切 layer），卡片会掉回文档流竖着摞，
+                  // 新成员看起来叠在老成员身上。内联样式高于一切类规则。
+                  position: "absolute",
                   left: node.x,
                   top: node.y,
                   width: node.width,

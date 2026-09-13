@@ -179,6 +179,22 @@ spouses = [{a, b}]                        ← 婚姻边（可选、独立）
 把紧随其后的整个 `@theme` 块一起毁掉。表现是：所有工具类静默停止生成，
 构建不报错、页面看不出来。踩过一次，排查花了很久。
 
+### 未分层的自定义类压过工具类（级联陷阱）
+
+Tailwind 4 把所有工具类放进 `@layer utilities`，而 `globals.css` 里
+`.glass-card` 这类自定义样式**不在任何 layer 里**。CSS 级联规则：
+**未分层样式优先于一切 layer**，与声明顺序和特异性无关。
+
+于是「自定义类 + 定位工具类」的组合会静默失效：画布节点卡片写过
+`glass-card absolute`，赢的却是 `.glass-card` 的 `position:relative`，
+卡片掉回文档流竖着摞，`left/top` 只剩偏移量作用——
+**新添加的家庭成员看起来叠在老成员身上**（2026-09 修复）。
+构建与测试全绿：jsdom 不应用外部样式表，纯布局测试也测不出 CSS 级联。
+
+规则：**给带自定义类的元素定位时，position 写进内联 style**（高于一切类规则），
+不要依赖工具类。同理，凡 `.glass-*` / `.avatar-*` / `.empty-slot` 与工具类
+在同名属性上冲突时，赢的都是自定义类，别指望工具类能覆盖它。
+
 ### Tailwind 4 的主题机制
 
 - 项目**没有** `tailwind.config.js`（Tailwind 4 正确写法：`components.json` 里

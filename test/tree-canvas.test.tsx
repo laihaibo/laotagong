@@ -156,4 +156,32 @@ describe("家族树画布 · 指针交互", () => {
       });
     }).not.toThrow();
   });
+
+  it("节点卡片的 position 是内联的 absolute（级联陷阱的回归测试）", async () => {
+    await act(async () => {
+      root.render(
+        <FamilyTree
+          state={family()}
+          focusId="ME"
+          onOpenPerson={() => {}}
+          onAddRelation={() => {}}
+          onSetMe={() => {}}
+        />
+      );
+    });
+
+    // .glass-card 未分层的 position:relative 会压过 @layer utilities 里的
+    // absolute 工具类（未分层样式优先于一切 layer）。卡片一旦掉回文档流，
+    // left/top 只剩偏移量作用，新成员就会叠在老成员身上。
+    // jsdom 不会应用外部样式表、测不出级联结果，
+    // 所以这里钉住的是「position 写在内联样式里」这个不受级联影响的机制。
+    const nodes = container.querySelectorAll("[data-tree-node]");
+    expect(nodes.length).toBeGreaterThan(0);
+    for (const node of nodes) {
+      expect(
+        (node as HTMLElement).style.position,
+        `${node.textContent} 的卡片丢了内联 position:absolute，会重新掉回文档流`
+      ).toBe("absolute");
+    }
+  });
 });
