@@ -1,63 +1,92 @@
+<div align="center">
+
+<img src="app/icon.svg" width="88" alt="老太公 · 家族图谱" />
+
 # 老太公 · 家族图谱
 
-以「我」为中心的家族关系图谱。液态玻璃视觉，本地存储，支持导入导出。
+**以「我」为原点的家族关系图谱 —— 液态玻璃视觉 · 纯本地运行 · 零后端**
 
-## 功能
+[![Deploy to GitHub Pages](https://github.com/laihaibo/laotagong/actions/workflows/deploy.yml/badge.svg)](https://github.com/laihaibo/laotagong/actions/workflows/deploy.yml)
+![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![React 19](https://img.shields.io/badge/React-19-20232A?logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
+![Tailwind CSS 4](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&logoColor=white)
+![tests](https://img.shields.io/badge/tests-vitest%20%2B%20jsdom-6E9F18?logo=vitest)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-参与贡献)
 
-- 以任意人物为「我」，向上无限追溯父母，向下延伸子女，横向连接配偶
-- 记录每人 **籍贯**、**户籍**、生卒年与备注
-- **照片头像**：填一个外置图片链接即可，不做上传、不占本地存储配额
-- **家族事件**：婚嫁、迁徙、出生、离世、褒学等，可记时间（容忍「约1950」这类写法）、地点与备注
-- **家族树画布**：主界面直接是可缩放、可拖拽的树。滚轮 / 双指缩放、拖动平移，右下角可一键「看全族」或「回到我」
-- **五服**：按本宗九族的经典算法自动推出服制（斩衰 / 齐衰 / 大功 / 小功 / 缌麻 / 出服），并给出推导依据
-- **享年**：生卒年都有时自动算出
-- **生肖**：由生年推导，非规范写法（「约1950」）也能推，会标注「（推）」
-- **查找**：弹窗内搜索姓名 / 籍贯 / 户籍，配合性别与在世筛选；结果按**以「我」为原点的关系距离**分组（祖辈 / 父辈 / 同辈 / 子辈 / 孙辈 / 未连接）
-- 人物卡片一键添加父母 / 子女 / 配偶，也可关联已有成员
-- 数据保存在浏览器 localStorage，可导出 / 导入 JSON
-- Next.js 16 静态导出 + GitHub Pages 自动部署
+*一个为中文家族设计的族谱应用：向上追祖、向下延孙、横向连姻，*
+*五服、生肖、享年、亲属称谓全部由关系数据实时推导，不落库、不需要迁移。*
 
-### 交互约定
+<br>
 
-- **点击卡片看详情**，不会改变「我」。想以某人重新定心，用详情面板里的
-  「以此人为中心」；**只有皇冠按钮会设「我」**。
-- 顶栏四个图标：品牌 / 查找 / 数据 / 主题。查找与数据都是弹窗。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/tree-dark.png">
+  <img src="docs/screenshots/tree-light.png" alt="老太公 · 家族树画布" width="100%">
+</picture>
 
-### 五服是怎么算的
+</div>
 
-旁系按「到共同祖先的代数」定服，这正是本宗九族的经典规则：
+---
 
-| 共同祖先 | 关系 | 服制 |
-|---|---|---|
-| 同父 | 兄弟姐妹 | 齐衰 |
-| 同祖 | 堂兄弟姐妹 | 大功 |
-| 同曾祖 | 从兄弟姐妹 | 小功 |
-| 同高祖 | 族兄弟姐妹 | 缌麻 |
-| 更远 | — | 出服 |
+## ✨ 特性
 
-直系：父母斩衰、祖父母齐衰、曾祖父母齐衰（三月）、高祖父母缌麻。
-姻亲不在本宗五服之内，单独标注。
+### 🌳 家族树画布
 
-> **这是简化版**：不区分长子/众子、父在/父殁、过继/出继。
-> 族谱应用够用，礼制考据不够。
+- **主界面即画布**：滚轮 / 双指缩放（以指针为锚点）、拖拽平移、小地图导航，一键「看全族」「回到我」
+- **经典族谱连线**：夫妻横线相连，从横线中点垂落总线，分叉到每个子女的顶边中点
+- **代际横带**：祖辈 / 父辈 / 同辈 / 子辈 / 孙辈一目了然
+- **亲系着色与筛选**：父系、母系、直系、后裔按色彩区分，可一键过滤，还能限制展示代数
 
-### 关系数据的一条硬规则
+### 🧮 推导引擎（一切可算的都不落库）
 
-新增关系时**必须双写对称**。历史上有个很隐蔽的 bug：先给某人添加子女、之后才添加配偶时，
-子女那一端永远不会被回填，于是把子女设为「我」就看不到另一位亲长——而反过来先加配偶就一切正常。
-现在所有关系写入都经过同一个对称层，并有测试守着（见 `test/family.links.test.ts`）。
+| 信息 | 推导方式 |
+|---|---|
+| 世代与关系距离 | 以「我」为原点 BFS，切换「我」全图自动重算 |
+| **五服**服制 | 本宗九族经典算法：斩衰 / 齐衰 / 大功 / 小功 / 缌麻 / 出服，**并给出推导依据** |
+| 亲属称谓 | 由关系路径实时推算 |
+| 生肖 | `(生年 − 4) mod 12`，「约1950」这类写法也能推，并标注「（推）」 |
+| 享年 | 卒年 − 生年，缺一端或卒早于生则不猜 |
 
-## 设计
+### 👤 人物档案
 
-基准是 **Apple Style + Liquid Glass**：
+- 籍贯、户籍、生卒年月日（容忍「约1950」「?」等不规范写法）、备注
+- **照片头像**：填外链即可，不上传、不占本地存储配额
+- **家族事件**：婚嫁、迁徙、出生、离世、褒学等，含时间、地点、备注
+- 卡片一键添加父母 / 子女 / 配偶，也可关联已有成员；自动回填缺失的另一位亲长，有歧义时逐条请你确认，**绝不凭空捏造祖先**
 
-- 玻璃材质（模糊、饱和度、高光扫过、背景光球）保持不变
-- 排版是重点：5 级字阶（13 / 15 / 17 / 22 / 响应式 28→34px），8px 基准间距网格
-- 卡片尺寸差来自**信息密度**：锚点卡片显示全部字段所以更高，亲属卡片只留姓名与生卒年，
-  但两者**宽度一致**，连线不会错位
-- 移动端为设计基准；视口 ≥1024px 时弹窗改为垂直水平居中
+### 🔍 查找与隐私
 
-## 数据模型
+- 按姓名 / 籍贯 / 户籍搜索，配合性别与在世筛选；结果按「以我为原点」的关系距离分组
+- **隐私优先**：全部数据只存在你自己的浏览器 localStorage，没有账号、没有服务器、没有埋点
+- **数据归你**：随时导出 / 导入 JSON；`pnpm build` 产物为纯静态文件，可以托管在任何地方——包括你自己的内网
+
+## 📸 更多截图
+
+| 深色主题 | 人物档案 |
+|---|---|
+| ![深色主题](docs/screenshots/tree-dark.png) | ![人物档案](docs/screenshots/person-detail.png) |
+
+## 🚀 快速上手
+
+```bash
+git clone https://github.com/laihaibo/laotagong.git
+cd laotagong
+pnpm install
+pnpm dev        # http://localhost:3000
+```
+
+要求 Node ≥ 22、pnpm。
+
+```bash
+pnpm build      # 静态导出到 out/，可直接托管
+pnpm test       # vitest + jsdom，131 个测试
+pnpm test:watch
+```
+
+## 📐 数据模型
+
+刻意地小。5 个键，没有 `generation` 字段——世代是运行时推导的（见上表），
+不需要数据迁移，也不可能跟源数据不一致。
 
 ```ts
 interface FamilyState {
@@ -67,65 +96,76 @@ interface FamilyState {
   spouses: Array<{ a: string; b: string }>;                            // 无序对
   meId: string | null;
 }
-
-interface Person {
-  id: string; name: string; gender: "male" | "female" | "unknown";
-  birthYear?: string; deathYear?: string;   // 字符串，容忍「约1950」「?」
-  ancestralHome?: string; household?: string; note?: string;
-  photoUrl?: string;                        // 外置链接
-  events?: FamilyEvent[];                   // 生平事件
-  createdAt: number; updatedAt: number;
-}
 ```
 
-**没有 `generation` 字段。** 世代是运行时由 `getRelationDistances()` 从 `meId` 做 BFS 推导的，
-不落库——这样切换「我」时自动重算，也不需要数据迁移。
+`Person` 支持籍贯 / 户籍 / 生卒（字符串，容忍「约1950」）/ 照片外链 / 生平事件。
 
-## 本地开发
+> 婚姻与共同养育是**两种独立的边**：先加父亲、再加母亲不会伪造出一段婚姻。
+> 族谱里凭空捏造关系，比留一个空缺更糟。
 
-```bash
-pnpm install
-pnpm dev
+## 🏗️ 项目结构
+
+```
+app/                  Next.js App Router（output: "export"，无服务端能力）
+  globals.css         设计 token + 玻璃样式（唯一设计来源）
+components/
+  family-tree.tsx     画布：缩放 / 平移 / 小地图 / 代际横带 / 连线渲染
+  family-app.tsx      应用外壳与各弹窗
+lib/
+  family.ts           纯函数数据层：关系写入、对称回填、关系距离、五服、生肖
+  tree.ts             布局与连线几何（纯函数，逐点采样测试守卫）
+  lineage.ts          亲系分类 / 筛选 / 族谱排序
+  kinship.ts          亲属称谓推导
+test/                 vitest + jsdom：数据不变量、布局几何、指针交互、模糊测试
 ```
 
-## 测试
-
-```bash
-pnpm test        # vitest + jsdom
-pnpm test:watch
-```
-
-覆盖数据层的核心不变量：关系双写对称、回填判定、关系距离推导、序列化往返、
-非法输入不抛错。**视觉与布局需要人工在浏览器里验证**——jsdom 不实现
-`backdrop-filter` 与真实的像素计算。
-
-## 构建
-
-```bash
-pnpm build
-```
-
-产物在 `out/` 目录，可直接静态托管。
-
-## 部署（GitHub Pages）
-
-1. 推送到 GitHub 仓库的 `main`（或 `master`）分支
-2. 仓库 Settings → Pages → Source 选择 **GitHub Actions**
-3. Actions 会自动构建并发布（Node 22 + pnpm）
-
-推送前会先跑 `verify` job（`pnpm test`）——**测试红了就挡住部署**。
-
-用户站点（`user.github.io`）与项目站点（`user.github.io/repo`）均自动适配 basePath。
-
-## 技术栈
-
-- Next.js 16（App Router，`output: "export"` — 无服务端能力）
-- React 19 + TypeScript
-- Tailwind CSS 4 + Radix UI（shadcn 风格组件）
-- vitest + jsdom
-- pnpm
-
-## 给协作者
-
-架构约束、数据不变量与历史踩过的坑都写在 [`CLAUDE.md`](./CLAUDE.md)。
+架构约束、数据不变量与历史踩坑详见 [`CLAUDE.md`](./CLAUDE.md)——
 动数据层或设计 token 之前请先读它。
+
+## 🧪 测试
+
+```bash
+pnpm test
+```
+
+131 个测试覆盖数据层的核心不变量：关系**双写对称**、回填只在无歧义时发生、
+关系距离推导、序列化往返、非法输入不抛错；布局层面有「任意两卡片不得相交」
+与「连线逐点采样不得穿过卡片」的几何守卫；画布指针交互（拖拽中抬手、双指缩放）
+也有回归测试。
+
+## 📦 部署到 GitHub Pages
+
+1. 推送到 `main` / `master` 分支
+2. 仓库 Settings → Pages → Source 选择 **GitHub Actions**
+3. 自动构建发布（Node 22 + pnpm）；`verify` job 先跑全部测试，**测试红了就挡住部署**
+
+用户站点与项目站点均自动适配 basePath。
+
+## 🗺️ 路线图
+
+- [ ] 多配偶关系的选择器（当前多配偶可录入，连线按最近邻绘制）
+- [ ] 人物卡片头像上传（当前为外链）
+- [ ] PWA 离线使用
+- [ ] 导出为图片 / 可打印的族谱排版
+
+> 有想法？欢迎开 issue 讨论。
+
+## 🤝 参与贡献
+
+欢迎 Issue 与 PR。提交前请：
+
+1. `pnpm test` 全绿
+2. 涉及数据层或设计 token 时，先读 [`CLAUDE.md`](./CLAUDE.md) 里的不变量
+3. 为新行为补上对应的回归测试
+
+## 📄 许可
+
+Copyright © 2026 Laiha。保留所有权利。
+
+---
+
+<div align="center">
+
+**老太公** —— 记住来处，才知道去处。
+
+</div>
