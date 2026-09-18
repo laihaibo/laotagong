@@ -392,7 +392,7 @@ function Minimap({
       title="点击跳转"
       onClick={(e) => {
         const rect = e.currentTarget.getBoundingClientRect();
-        const px = ((e.clientX - rect.left) / s) + (layout.width > 0 ? 0 : 0);
+        const px = (e.clientX - rect.left) / s;
         const py = (e.clientY - rect.top) / s;
         onJump(px, py);
       }}
@@ -443,24 +443,13 @@ const TreeScene = memo(function TreeScene({
   onAddRelation: (id: string) => void;
   onSetMe: (id: string) => void;
 }) {
-  const junctionById = useMemo(() => {
-    const m = new Map<string, { x: number; y: number }>();
-    for (const j of layout.junctions) m.set(j.id, { x: j.x, y: j.y });
-    return m;
-  }, [layout.junctions]);
-
   return (
     <>
-      {/* 代际带 */}
       {layout.bands.map((band) => (
         <div
-          key={`band-${band.generation}`}
+          key={"band-" + band.generation}
           className="pointer-events-none absolute left-0 w-full"
-          style={{
-            top: band.y - 22,
-            height: 22,
-            opacity: 0.7,
-          }}
+          style={{ top: band.y - 22, height: 22, opacity: 0.7 }}
         >
           <div className="flex h-full items-end px-2">
             <span className="rounded-t-md bg-[var(--glass-strong)] px-2 py-0.5 text-[10px] tracking-wide text-[var(--ink-faint)]">
@@ -477,109 +466,24 @@ const TreeScene = memo(function TreeScene({
         height={layout.height}
         aria-hidden
       >
-        {layout.edges.map((edge, index) => {
-          const stroke = LINEAGE_STROKE[edge.lineage] ?? "var(--line-other)";
-          if (edge.kind === "spouse") {
-            const from = layout.byId.get(edge.fromId);
-            const to = layout.byId.get(edge.toId);
-            if (!from || !to) return null;
-            return (
-              <line
-                key={`s-${index}`}
-                x1={from.x + from.width}
-                y1={from.y + from.height / 2}
-                x2={to.x}
-                y2={to.y + to.height / 2}
-                stroke="var(--line-spouse)"
-                strokeWidth={2}
-                strokeOpacity={0.7}
-              />
-            );
-          }
-          // junction 边由下方 junction 总线统一绘制，避免重复
-          if (edge.kind === "junction") return null;
-
-          const from = layout.byId.get(edge.fromId);
-          const to = layout.byId.get(edge.toId);
-          if (!from || !to) return null;
-          const hasJunction = layout.junctions.some(
-            (j) => j.childIds.includes(edge.toId) && j.parentIds.includes(edge.fromId)
-          );
-          if (hasJunction) return null;
-          const pline = layout.lineageOf.get(edge.fromId);
-          const fx =
-            pline === "paternal"
-              ? from.x + from.width * 0.28
-              : pline === "maternal"
-                ? from.x + from.width * 0.72
-                : from.x + from.width / 2;
-          const fy = from.y + from.height;
-          const tx =
-            pline === "paternal"
-              ? to.x + to.width * 0.28
-              : pline === "maternal"
-                ? to.x + to.width * 0.72
-                : to.x + to.width / 2;
-          const ty = to.y;
-          // 无汇合点的单亲连线：按子女 id 错开水平通道
-          const hash = edge.toId.split("").reduce((s, ch) => s + ch.charCodeAt(0), 0);
-          const lane = fy + (ty - fy) * 0.35 + (hash % 5) * 8;
+        {(layout.routes ?? []).map((route) => {
+          const stroke =
+            route.kind === "spouse"
+              ? "var(--line-spouse)"
+              : LINEAGE_STROKE[route.lineage] ?? "var(--line-other)";
           return (
             <path
-              key={`b-${index}`}
-              d={`M ${fx} ${fy} V ${lane} H ${tx} V ${ty}`}
+              key={route.id}
+              d={route.d}
               fill="none"
               stroke={stroke}
-              strokeWidth={1.75}
-              strokeOpacity={0.5}
+              strokeWidth={route.kind === "spouse" ? 2.2 : 1.8}
+              strokeOpacity={route.kind === "spouse" ? 0.85 : 0.72}
+              strokeLinejoin="round"
+              strokeLinecap="round"
             />
           );
         })}
-
-        {/* 亲子总线：家长分车道下落 → 横向总线 → 各子女分叉 */}
-        {layout.junctions.map((j) => {
-          const stroke = LINEAGE_STROKE[j.lineage] ?? "var(--line-other)";
-          return (
-            <g key={j.id} stroke={stroke} strokeWidth={1.85} strokeOpacity={0.62} fill="none">
-              <line x1={j.busLeft} y1={j.busY} x2={j.busRight} y2={j.busY} />
-              {j.parentLanes.map((lane) => {
-                const parent = layout.byId.get(lane.parentId);
-                if (!parent) return null;
-                const cx = parent.x + parent.width / 2;
-                return (
-                  <path
-                    key={`pl-${j.id}-${lane.parentId}`}
-                    d={`M ${cx} ${parent.y + parent.height} V ${lane.laneY} H ${lane.x} V ${j.busY}`}
-                  />
-                );
-              })}
-              {j.childIds.map((cid) => {
-                const child = layout.byId.get(cid);
-                if (!child) return null;
-                // 必须与布局端 childAttach 一致，且总线已覆盖该点，否则线会断开
-                const cx =
-                  j.childAttach?.[cid] ?? child.x + child.width / 2;
-                return (
-                  <path
-                    key={`cl-${j.id}-${cid}`}
-                    d={`M ${cx} ${j.busY} V ${child.y}`}
-                  />
-                );
-              })}
-            </g>
-          );
-        })}
-        {/* 汇合点圆点 */}
-        {layout.junctions.map((j) => (
-          <circle
-            key={j.id}
-            cx={j.x}
-            cy={j.y}
-            r={3}
-            fill={LINEAGE_STROKE[j.lineage] ?? "var(--line-other)"}
-            opacity={0.85}
-          />
-        ))}
       </svg>
 
       {layout.nodes.map((node) => {
@@ -589,11 +493,16 @@ const TreeScene = memo(function TreeScene({
         const isFocus = focusId === node.id;
         const years =
           person.birthYear || person.deathYear
-            ? `${person.birthYear || "?"}–${person.deathYear || ""}`
+            ? person.birthYear || "?" + "?" + person.deathYear || ""
+            : "";
+        const yearsText =
+          person.birthYear || person.deathYear
+            ? (person.birthYear || "?") + "?" + (person.deathYear || "")
             : "";
         const age = lifespanOf(person);
         const zodiac = zodiacOf(person.birthYear);
         const lineage = node.lineage;
+        const term = kinship.get(node.id) || lineageLabel(lineage) || "";
 
         return (
           <div
@@ -606,7 +515,7 @@ const TreeScene = memo(function TreeScene({
               top: node.y,
               width: node.width,
               height: node.height,
-              borderLeft: `3px solid ${LINEAGE_STROKE[lineage] ?? "transparent"}`,
+              borderLeft: "3px solid " + (LINEAGE_STROKE[lineage] ?? "transparent"),
             }}
             className={cn(
               "glass-card absolute flex items-stretch overflow-hidden rounded-2xl",
@@ -623,18 +532,17 @@ const TreeScene = memo(function TreeScene({
               <span className="w-full truncate text-caption font-medium text-[var(--ink)]">
                 {person.name}
               </span>
-              {years && (
+              {yearsText ? (
                 <span className="w-full truncate text-caption text-[var(--ink-faint)]">
-                  {years}
-                  {age !== null && ` · ${age}`}
-                  {zodiac && ` · ${zodiac.label}`}
+                  {yearsText}
+                  {age !== null && " \u00b7 " + age}
+                  {zodiac && " \u00b7 " + zodiac.label}
                 </span>
-              )}
+              ) : null}
               <span className="w-full truncate text-caption font-medium text-[var(--accent)]">
-                {kinship.get(node.id) || (isMe ? "我" : lineageLabel(lineage) || generationLabel(node.generation))}
+                {term}
               </span>
             </button>
-
             <div
               className="flex w-11 shrink-0 flex-col border-l border-[var(--glass-edge)]"
               onPointerDown={(e) => e.stopPropagation()}
@@ -674,13 +582,13 @@ const TreeScene = memo(function TreeScene({
 
 function lineageLabel(kind: LineageKind): string {
   const map: Record<LineageKind, string> = {
-    ego: "我",
-    paternal: "父系",
-    maternal: "母系",
-    descendant: "后裔",
-    sibling: "同辈",
-    affinal: "姻亲",
-    collateral: "旁系",
+    ego: "?",
+    paternal: "??",
+    maternal: "??",
+    descendant: "??",
+    sibling: "??",
+    affinal: "??",
+    collateral: "??",
     orphan: "",
   };
   return map[kind] ?? "";
