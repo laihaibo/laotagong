@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd *)",
+      "Bash(pnpm build *)",
+      "Bash(pnpm test *)",
+      "Bash(pnpm check:contrast)",
+      "Bash(python -)",
+      "Bash(cp components/family-tree.tsx /tmp/ft.fixed)",
+      "Bash(cp components/family-tree.tsx components/family-tree.tsx.fixed)",
+      "Bash(pnpm vitest *)"
+    ]
+  }
+}
