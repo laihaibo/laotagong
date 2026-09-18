@@ -1,8 +1,7 @@
-﻿import {
+import {
   type FamilyState,
   getChildrenIds,
   getRelationDistances,
-  getSpouseIds,
 } from "./family";
 import {
   type LineageFilter,
@@ -35,7 +34,7 @@ export interface TreeLayoutNode {
 export interface TreeLayoutEdge {
   fromId: string;
   toId: string;
-  kind: "blood" | "spouse" | "junction";
+  kind: "blood" | "spouse";
   lineage: LineageKind;
 }
 
@@ -45,27 +44,10 @@ export interface TreeLayoutRoute {
   toId: string;
   kind: "blood" | "spouse";
   lineage: LineageKind;
-  /** SVG ?????????????????????? */
+  /** SVG path 的 d 属性；坐标与节点同处画布坐标系，两端都落在卡片边缘上 */
   d: string;
   start: { x: number; y: number };
   end: { x: number; y: number };
-}
-
-export interface TreeLayoutJunction {
-  id: string;
-  x: number;
-  y: number;
-  parentIds: string[];
-  childIds: string[];
-  lineage: LineageKind;
-  /** 子女总线（横向）所在高度，不同汇合点会错开 */
-  busY: number;
-  busLeft: number;
-  busRight: number;
-  /** 家长竖直车道：双亲各自下落再汇入，避免并成一股 */
-  parentLanes: Array<{ parentId: string; x: number; laneY: number }>;
-  /** 子女挂接点 x：与渲染端一致，总线必须盖住这些点 */
-  childAttach: Record<string, number>;
 }
 
 export interface TreeGenerationBand {
@@ -79,7 +61,6 @@ export interface TreeLayout {
   nodes: TreeLayoutNode[];
   edges: TreeLayoutEdge[];
   routes: TreeLayoutRoute[];
-  junctions: TreeLayoutJunction[];
   bands: TreeGenerationBand[];
   byId: Map<string, TreeLayoutNode>;
   width: number;
@@ -151,9 +132,10 @@ function restrictState(state: FamilyState, visible: Set<string>): FamilyState {
 
 
 /**
- * ?????????????????
- * ????? + ??????????? clamp ?????
- * ?????????????????????? path?
+ * 把每条关系画成一条 SVG path。
+ *
+ * 两端必须落在对应卡片的边缘上，且中途不得穿过任何卡片——
+ * 被卡片盖住的那一段在视觉上就是「断线」。
  */
 function buildRoutes(
   state: FamilyState,
@@ -162,17 +144,25 @@ function buildRoutes(
 ): TreeLayoutRoute[] {
   const routes: TreeLayoutRoute[] = [];
 
+  /** 两张卡的相向边之间是否隔着同排的其他卡片（多配偶同单元时必隔） */
+  const rowBlockedBetween = (
+    left: TreeLayoutNode,
+    right: TreeLayoutNode
+  ): boolean => {
+    const leftRight = left.x + left.width;
+    for (const n of byId.values()) {
+      if (n === left || n === right) continue;
+      if (Math.abs(n.y - left.y) > 2) continue;
+      if (n.x < right.x - 2 && n.x + n.width > leftRight + 2) return true;
+    }
+    return false;
+  };
+
   const childRatio = (pid: string): number => {
     const l = lineageOf.get(pid);
     if (l === "paternal") return 0.32;
     if (l === "maternal") return 0.68;
     return 0.5;
-  };
-
-  // ????????????????
-  const parentListOf = (childId: string): string[] => {
-    const e = state.parents[childId];
-    return [e?.fatherId, e?.motherId].filter((x): x is string => Boolean(x));
   };
 
   for (const [childId, entry] of Object.entries(state.parents)) {
@@ -200,7 +190,7 @@ function buildRoutes(
       if (!parent) return;
       const pl = lineageOf.get(pid) ?? "orphan";
       const ratio = childRatio(pid);
-      // ?????????????????
+      // 双亲各占卡片下沿的 40% / 60% 点，两根线不重叠
       const pRatio =
         parents.length >= 2 ? (pIndex === 0 ? 0.4 : 0.6) : 0.5;
       const sx = parent.x + parent.width * pRatio;
@@ -209,15 +199,22 @@ function buildRoutes(
       const ey = child.y;
 
       let d: string;
-      if (Math.abs(sx - ex) < 1.5) {
+      let start = { x: sx, y: sy };
+      if (Math.abs(parent.y - child.y) < 2) {
+        // 亲子同一排（与「我」不连通的整支、或未设「我」）：
+        // 常规向下肘线只能从下方爬回子女顶边，那根竖线会整段穿过
+        // 子女卡片背后。改从家长顶边出发，沿行上方的空带绕到子女顶边。
+        const rise = parent.y - 28;
+        d = "M " + sx + " " + parent.y + " V " + rise + " H " + ex + " V " + ey;
+        start = { x: sx, y: parent.y };
+      } else if (Math.abs(sx - ex) < 1.5) {
         d = "M " + sx + " " + sy + " V " + ey;
       } else {
         const gap = Math.max(ey - sy, 8);
-        // ?????????????? + ???????????
-        const lineageBias = pl === "paternal" ? 0 : pl === "maternal" ? 8 : 4;
+        // 横向通道落在行间空带里；不同家长/排行再错开，避免叠成一条粗线
+        const lineageBias = pl === "paternal" ? 0 : pl === "maternal" ? 10 : 5;
         const channel =
-          sy + gap * 0.4 + lineageBias + (pIndex % 2) * 6 + ((sibIndex < 0 ? 0 : sibIndex) % 3) * 4;
-        // ???????????????????????
+          sy + gap * 0.4 + lineageBias + (pIndex % 2) * 12 + ((sibIndex < 0 ? 0 : sibIndex) % 3) * 5;
         let hMin = Math.min(sx, ex);
         let hMax = Math.max(sx, ex);
         for (const sid of Object.keys(state.persons)) {
@@ -227,19 +224,19 @@ function buildRoutes(
           const sameRowAsChild = Math.abs(sp.y - child.y) < 2;
           const sameRowAsParent = Math.abs(sp.y - parent.y) < 2;
           if (!sameRowAsChild && !sameRowAsParent) continue;
-          // ?????????
+          // 同排的非家长成员：横向通道不得伸进其卡片
           if (sameRowAsChild && sid !== pid) {
             const isParentOfChild = parents.includes(sid);
             if (!isParentOfChild) {
               if (sp.x >= child.x + child.width - 2) {
-                // ??????????????????
+                // 成员在子女右侧：通道右端最多到挂接点
                 hMax = Math.min(hMax, child.x + child.width * ratio + 2);
               } else if (sp.x + sp.width <= child.x + 2) {
                 hMin = Math.max(hMin, child.x + child.width * ratio - 2);
               }
             }
           }
-          // ?????????????????????????
+          // 父系/母系的线各守本侧半区，不跨过子女中线
           if (pl === "paternal") {
             hMax = Math.min(hMax, child.x + child.width * 0.5);
             hMin = Math.max(hMin, Math.min(sx, parent.x));
@@ -259,9 +256,8 @@ function buildRoutes(
           hMin = Math.min(sx, ex);
           hMax = Math.max(sx, ex);
         }
-        // ???????????????????????????
-        // ?? x ???? [hMin,hMax]????? ex ?????????
-        const hx1 = Math.max(hMin, Math.min(hMax, sx));
+        // 横向通道的落点 x 夹在 [hMin,hMax] 内；可能与 ex 不同，
+        // 但仍落在子女顶边上，线不会悬空
         const hx2 = Math.max(hMin, Math.min(hMax, ex));
         d =
           "M " + sx + " " + sy +
@@ -277,7 +273,7 @@ function buildRoutes(
         kind: "blood",
         lineage: pl === "orphan" ? lineageOf.get(childId) ?? "orphan" : pl,
         d,
-        start: { x: sx, y: sy },
+        start,
         end: { x: ex, y: ey },
       });
     });
@@ -287,14 +283,33 @@ function buildRoutes(
     const na = byId.get(a);
     const nb = byId.get(b);
     if (!na || !nb) continue;
-    // ??????????????????????
     const left = na.x <= nb.x ? na : nb;
     const right = na.x <= nb.x ? nb : na;
     const other = na.x <= nb.x ? b : a;
     const self = na.x <= nb.x ? a : b;
     const y1 = left.y + left.height / 2;
     const y2 = right.y + right.height / 2;
-    const d = "M " + (left.x + left.width) + " " + y1 + " L " + right.x + " " + y2;
+    let d: string;
+    let start: { x: number; y: number };
+    let end: { x: number; y: number };
+    if (rowBlockedBetween(left, right)) {
+      // 中间隔着同排的其他卡片（如 A—B—C 单元里 A 与 C 的婚姻）：
+      // 直连会从中间人卡片背后穿过，看起来断线。沿行下方 30px 绕行。
+      const dropY = left.y + left.height + 30;
+      const exitX = left.x + left.width - 10;
+      const entryX = right.x + 10;
+      d =
+        "M " + exitX + " " + (left.y + left.height) +
+        " V " + dropY +
+        " H " + entryX +
+        " V " + (right.y + right.height);
+      start = { x: exitX, y: left.y + left.height };
+      end = { x: entryX, y: right.y + right.height };
+    } else {
+      d = "M " + (left.x + left.width) + " " + y1 + " L " + right.x + " " + y2;
+      start = { x: left.x + left.width, y: y1 };
+      end = { x: right.x, y: y2 };
+    }
     routes.push({
       id: "r:s:" + self + "+" + other,
       fromId: self,
@@ -302,8 +317,8 @@ function buildRoutes(
       kind: "spouse",
       lineage: "affinal",
       d,
-      start: { x: left.x + left.width, y: y1 },
-      end: { x: right.x, y: y2 },
+      start,
+      end,
     });
   }
 
@@ -616,158 +631,6 @@ export function layoutFamilyTree(
     }
   }
 
-  // 父母汇合点：双亲/多子女的总线分叉，避免每人两根斜线织成网
-  const junctionGroups = new Map<string, string[]>();
-  for (const [childId, entry] of Object.entries(working.parents)) {
-    if (!byId.has(childId)) continue;
-    const parents = [entry.fatherId, entry.motherId].filter(
-      (p): p is string => Boolean(p) && byId.has(p as string)
-    );
-    if (parents.length === 0) continue;
-    const key = [...parents].sort().join("+");
-    const list = junctionGroups.get(key) ?? [];
-    list.push(childId);
-    junctionGroups.set(key, list);
-  }
-  const junctions: TreeLayoutJunction[] = [];
-  for (const [key, childIds] of junctionGroups) {
-    const parentIds = key.split("+").filter((id) => byId.has(id));
-    if (parentIds.length === 0 || childIds.length === 0) continue;
-    let parentBottom = Number.NEGATIVE_INFINITY;
-    let childTop = Number.POSITIVE_INFINITY;
-    let parentCx = 0;
-    let childCx = 0;
-    for (const pid of parentIds) {
-      const n = byId.get(pid) as TreeLayoutNode;
-      parentBottom = Math.max(parentBottom, n.y + n.height);
-      parentCx += n.x + n.width / 2;
-    }
-    parentCx /= parentIds.length;
-    for (const cid of childIds) {
-      const n = byId.get(cid) as TreeLayoutNode;
-      childTop = Math.min(childTop, n.y);
-      childCx += n.x + n.width / 2;
-    }
-    childCx /= childIds.length;
-    const sampleId = childIds[0];
-    const sortedChildren = [...childIds].sort((a, b) => {
-      const na = byId.get(a) as TreeLayoutNode;
-      const nb = byId.get(b) as TreeLayoutNode;
-      return na.x + na.width / 2 - (nb.x + nb.width / 2);
-    });
-
-    // 双亲亲系 → 子女挂接比例（与绘制端同一规则）
-    const attachRatio = (() => {
-      let pat = false;
-      let mat = false;
-      for (const pid of parentIds) {
-        const l = lineageOf.get(pid);
-        if (l === "paternal") pat = true;
-        if (l === "maternal") mat = true;
-      }
-      if (pat && !mat) return 0.28;
-      if (mat && !pat) return 0.72;
-      return 0.5;
-    })();
-
-    const childAttach: Record<string, number> = {};
-    for (const cid of sortedChildren) {
-      const n = byId.get(cid) as TreeLayoutNode;
-      childAttach[cid] = n.x + n.width * attachRatio;
-    }
-
-    const stagger = (junctions.length % 3) * 10;
-    const busY = parentBottom + (childTop - parentBottom) * 0.42 + stagger;
-
-    const parentLanes = parentIds.map((pid, index) => {
-      const n = byId.get(pid) as TreeLayoutNode;
-      const cx = n.x + n.width / 2;
-      const sign = parentIds.length === 1 ? 0 : index === 0 ? -1 : 1;
-      const pl = lineageOf.get(pid);
-      const sidePull = pl === "paternal" ? -16 : pl === "maternal" ? 16 : 0;
-      // 车道停在「家长中心」与「子女挂接点」之间，不越过到另一侧配偶
-      const targets = sortedChildren.map((cid) => childAttach[cid]);
-      const target =
-        targets.length > 0
-          ? targets.reduce((s, v) => s + v, 0) / targets.length
-          : cx;
-      const laneX =
-        pl === "paternal"
-          ? Math.min(cx + sign * 8, target - 4)
-          : pl === "maternal"
-            ? Math.max(cx + sign * 8, target + 4)
-            : cx + sign * 8 + sidePull;
-      return {
-        parentId: pid,
-        x: laneX,
-        laneY: busY - 16 - index * 10,
-      };
-    });
-
-    // 总线必须盖住：所有车道终点 + 所有子女挂接点
-    let busLeft = Number.POSITIVE_INFINITY;
-    let busRight = Number.NEGATIVE_INFINITY;
-    const xs = [...Object.values(childAttach), ...parentLanes.map((l) => l.x)];
-    for (const x of xs) {
-      busLeft = Math.min(busLeft, x);
-      busRight = Math.max(busRight, x);
-    }
-
-    // 非本汇合点家长的配偶（如父亲的现任配偶母亲）：总线不得伸进其卡片
-    for (const cid of sortedChildren) {
-      const child = byId.get(cid) as TreeLayoutNode;
-      for (const sid of getSpouseIds(working, cid)) {
-        if (parentIds.includes(sid)) continue;
-        const sp = byId.get(sid);
-        if (!sp) continue;
-        const sameRow = Math.abs(sp.y - child.y) < 1;
-        if (!sameRow) continue;
-        if (sp.x >= child.x + child.width - 1) {
-          busRight = Math.min(busRight, child.x + child.width + 6);
-        } else if (sp.x + sp.width <= child.x + 1) {
-          busLeft = Math.max(busLeft, child.x - 6);
-        }
-      }
-    }
-    if (busLeft > busRight) {
-      const mid = (busLeft + busRight) / 2;
-      busLeft = mid - 1;
-      busRight = mid + 1;
-    }
-
-    junctions.push({
-      id: "j:" + key,
-      x: (busLeft + busRight) / 2,
-      y: busY,
-      parentIds,
-      childIds: sortedChildren,
-      lineage: lineageOf.get(sampleId) ?? "orphan",
-      busY,
-      busLeft,
-      busRight,
-      parentLanes,
-      childAttach,
-    });
-  }
-  for (const j of junctions) {
-    for (const pid of j.parentIds) {
-      edges.push({
-        fromId: pid,
-        toId: j.id,
-        kind: "junction",
-        lineage: j.lineage,
-      });
-    }
-    for (const cid of j.childIds) {
-      edges.push({
-        fromId: j.id,
-        toId: cid,
-        kind: "junction",
-        lineage: j.lineage,
-      });
-    }
-  }
-
   const bands: TreeGenerationBand[] = generations.map((g) => {
     const y = (g - minGeneration) * (NODE_H + V_GAP);
     return {
@@ -793,7 +656,6 @@ export function layoutFamilyTree(
       nodes,
       edges,
       routes: [],
-      junctions,
       bands,
       byId,
       width: 0,
@@ -807,22 +669,6 @@ export function layoutFamilyTree(
     node.x += dx;
     node.y += dy;
   }
-  for (const j of junctions) {
-    j.x += dx;
-    j.y += dy;
-    j.busY += dy;
-    j.busLeft += dx;
-    j.busRight += dx;
-    for (const lane of j.parentLanes) {
-      lane.x += dx;
-      lane.laneY += dy;
-    }
-    if (j.childAttach) {
-      for (const cid of Object.keys(j.childAttach)) {
-        j.childAttach[cid] += dx;
-      }
-    }
-  }
   for (const b of bands) {
     b.y += dy;
   }
@@ -833,7 +679,6 @@ export function layoutFamilyTree(
     nodes,
     edges,
     routes,
-    junctions,
     bands,
     byId,
     width: maxX - minX + 80,
@@ -841,6 +686,4 @@ export function layoutFamilyTree(
     lineageOf,
   };
 }
-
-export { getSpouseIds };
 

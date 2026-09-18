@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-09-18T13:05:29.902Z",
+  "sessionId": "sess_86335eba-363c-4354-a5f8-089a52a32a01",
+  "event": "PostToolUse",
+  "toolName": "Edit",
+  "file": "test/pedigree-separate.test.ts",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 15,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

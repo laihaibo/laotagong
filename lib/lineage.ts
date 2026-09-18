@@ -1,4 +1,4 @@
-﻿import { type FamilyState, getSpouseIds } from "./family";
+import { type FamilyState, getSpouseIds } from "./family";
 
 export type LineageKind =
   | "ego"

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import {
   memo,
@@ -491,13 +491,9 @@ const TreeScene = memo(function TreeScene({
         if (!person) return null;
         const isMe = meId === node.id;
         const isFocus = focusId === node.id;
-        const years =
-          person.birthYear || person.deathYear
-            ? person.birthYear || "?" + "?" + person.deathYear || ""
-            : "";
         const yearsText =
           person.birthYear || person.deathYear
-            ? (person.birthYear || "?") + "?" + (person.deathYear || "")
+            ? (person.birthYear || "?") + "–" + (person.deathYear || "")
             : "";
         const age = lifespanOf(person);
         const zodiac = zodiacOf(person.birthYear);
@@ -582,13 +578,13 @@ const TreeScene = memo(function TreeScene({
 
 function lineageLabel(kind: LineageKind): string {
   const map: Record<LineageKind, string> = {
-    ego: "?",
-    paternal: "??",
-    maternal: "??",
-    descendant: "??",
-    sibling: "??",
-    affinal: "??",
-    collateral: "??",
+    ego: "我",
+    paternal: "父系",
+    maternal: "母系",
+    descendant: "后裔",
+    sibling: "同辈",
+    affinal: "姻亲",
+    collateral: "旁系",
     orphan: "",
   };
   return map[kind] ?? "";

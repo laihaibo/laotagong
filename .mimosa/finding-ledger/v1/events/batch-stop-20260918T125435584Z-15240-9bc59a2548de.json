@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260918T125435584Z-15240-9bc59a2548de",
+  "runId": "20260918T125435584Z-15240-9bc59a2548de",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "131f908be9201aa003cf92ed90d924b26d5bc4b4",
+  "diffHash": "0c429dc4df8b4024f2fc726385e295fbf6ad638f1fe0c9a616144a57dc56a32f",
+  "rulesVersion": "unavailable",
+  "sessionHash": "31c4c9ebbc3bf36fa2a86bae26abe83e60134943f0419f24fce1c8583040829f",
+  "reportRef": ".mimosa/reports/task-review-sess_86335eba-363c-4354-a5f8-089a52a32a01-20260918T125435584Z-15240-9bc59a2548de.json",
+  "events": [],
+  "observedFindingIds": [
+    "mimosa-36560c3d92a40b7ffd8a3eb4"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "lib/tree.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "components/family-tree.tsx",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/routes.geometry.test.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "next-env.d.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-09-18T12:54:36.082Z"
+}
