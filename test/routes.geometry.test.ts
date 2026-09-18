@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createPerson, type FamilyState, type Person } from "@/lib/family";
-import { layoutFamilyTree } from "@/lib/tree";
+import { SPOUSE_GAP, layoutFamilyTree } from "@/lib/tree";
 
 function person(id: string, g: Person["gender"], y = ""): Person {
   return createPerson({ id, name: id, gender: g, birthYear: y, createdAt: 1 });
@@ -226,9 +226,22 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
         xs.length > 0 &&
         route.start.x >= Math.min(...xs) - 2 &&
         route.start.x <= Math.max(...xs) + 2;
-      const startOk = onEdge(route.start, from) || startOnMarriageBar;
+      // 多子女的总线画法：短垂线起点悬在子女上方的总线高度上
+      const startIsDrop =
+        route.kind === "blood" &&
+        Math.abs(route.start.x - route.end.x) < 0.5 &&
+        route.start.y <= route.end.y &&
+        !insideAnyCard(route.start);
+      const startOk =
+        onEdge(route.start, from) || startOnMarriageBar || startIsDrop;
       expect(startOk, `${route.id} 起点悬空`).toBe(true);
-      expect(onEdge(route.end, to), `${route.id} 终点不在 ${route.toId} 边缘上`).toBe(true);
+      // 总线路由的终点悬在末位子女上方（其 x 即该子女顶边中点）
+      const endIsBus =
+        route.kind === "blood" &&
+        Math.abs(route.end.x - (to.x + to.width / 2)) < 0.5 &&
+        route.end.y < to.y;
+      const endOk = onEdge(route.end, to) || endIsBus;
+      expect(endOk, `${route.id} 终点不在 ${route.toId} 边缘上`).toBe(true);
     }
   }
 
@@ -334,7 +347,7 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
       Math.abs(m.x - (f.x + f.width)),
       Math.abs(f.x - (m.x + m.width))
     );
-    expect(gap, "父母卡片没有并格相邻").toBeLessThanOrEqual(16);
+    expect(gap, "父母卡片没有并格相邻").toBe(SPOUSE_GAP);
     // 有「父母相连」横线 + 从横线中点垂落的血亲线
     const bar = layout.routes.find(
       (r) =>
@@ -380,5 +393,72 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
     };
     assertAllRoutesClear(state);
     assertEndpointsOnEdges(state);
+  });
+
+  it("夫妻男左女右（即使妻子年长）；横线加长；多子女共享一条总线", () => {
+    // 妻子比丈夫年长 5 岁：按生年排序妻子会跑到左边，性别优先后必须男左女右
+    const persons: Record<string, Person> = {};
+    for (const [id, g, y] of [
+      ["ME", "male", "1990"],
+      ["WIFE", "female", "1985"],
+      ["S1", "male", "2012"],
+      ["S2", "female", "2015"],
+      ["S3", "male", "2018"],
+    ] as const) {
+      persons[id] = person(id, g, y);
+    }
+    const state: FamilyState = {
+      version: 1,
+      persons,
+      parents: {
+        S1: { fatherId: "ME", motherId: "WIFE" },
+        S2: { fatherId: "ME", motherId: "WIFE" },
+        S3: { fatherId: "ME", motherId: "WIFE" },
+      },
+      spouses: [{ a: "ME", b: "WIFE" }],
+      meId: "ME",
+    };
+    assertAllRoutesClear(state);
+    assertEndpointsOnEdges(state);
+
+    const layout = layoutFamilyTree(state);
+    const me = layout.byId.get("ME")!;
+    const wife = layout.byId.get("WIFE")!;
+    // 1) 男左女右
+    expect(me.x + me.width).toBeLessThanOrEqual(wife.x + 1);
+
+    // 2) 横线恰好横跨两卡相向边（长度 = SPOUSE_GAP，不再是一小截）
+    const bar = layout.routes.find(
+      (r) => r.kind === "spouse" && r.fromId === "ME" && r.toId === "WIFE"
+    );
+    expect(bar, "缺少夫妻横线").toBeTruthy();
+    expect(bar!.end.x - bar!.start.x).toBeCloseTo(SPOUSE_GAP, 0);
+
+    // 3) 多子女：一条主干 + 一条总线 + 三根短垂线（共享同一总线高度）
+    const drops = layout.routes.filter((r) => r.id.startsWith("r:ME+WIFE>drop:"));
+    expect(drops).toHaveLength(3);
+    const busYs = new Set(drops.map((r) => r.start.y));
+    expect(busYs.size, "三根垂线没有共享同一条总线").toBe(1);
+    const busY = [...busYs][0];
+    const trunk = layout.routes.find(
+      (r) => r.id === "r:ME+WIFE>bus@" + drops[0].end.y
+    );
+    expect(trunk, "缺少主干+总线路由").toBeTruthy();
+    // 主干从夫妻横线中点垂落
+    expect(trunk!.start.x).toBeCloseTo((me.x + me.width + wife.x) / 2, 0);
+    expect(trunk!.start.y).toBeCloseTo(bar!.start.y, 0);
+    // 总线横贯首末孩子的顶边中点 x
+    const centers = ["S1", "S2", "S3"].map(
+      (id) => layout.byId.get(id)!.x + layout.byId.get(id)!.width / 2
+    );
+    const busPts = parsePathPoints(trunk!.d).filter((p) => p.y === busY);
+    expect(Math.min(...busPts.map((p) => p.x))).toBeCloseTo(Math.min(...centers), 0);
+    expect(Math.max(...busPts.map((p) => p.x))).toBeCloseTo(Math.max(...centers), 0);
+    // 每根垂线落到对应孩子的顶边中点
+    for (const d of drops) {
+      const to = layout.byId.get(d.toId)!;
+      expect(d.end.x).toBeCloseTo(to.x + to.width / 2, 0);
+      expect(d.end.y).toBeCloseTo(to.y, 0);
+    }
   });
 });

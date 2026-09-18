@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260918T152936168Z-10264-69d0726b5a66",
+  "runId": "20260918T152936168Z-10264-69d0726b5a66",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "35849e7f24871beb96a54fdd5a389d35f7b4fdec",
+  "diffHash": "507b12b228a30046fbed1f2922f911422f80feb8a43a7975c86115db71df9f73",
+  "rulesVersion": "unavailable",
+  "sessionHash": "31c4c9ebbc3bf36fa2a86bae26abe83e60134943f0419f24fce1c8583040829f",
+  "reportRef": ".mimosa/reports/task-review-sess_86335eba-363c-4354-a5f8-089a52a32a01-20260918T152936168Z-10264-69d0726b5a66.json",
+  "events": [],
+  "observedFindingIds": [
+    "mimosa-36560c3d92a40b7ffd8a3eb4"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "lib/tree.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/routes.geometry.test.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-09-18T15:29:36.645Z"
+}

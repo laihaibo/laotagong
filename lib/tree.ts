@@ -17,7 +17,8 @@ import {
 export const NODE_W = 208;
 export const NODE_H = 132;
 const H_GAP = 56;
-const SPOUSE_GAP = 14;
+/** 夫妻/共同养育两卡的间距：连线横线画在这里，太短会看不清 */
+export const SPOUSE_GAP = 40;
 const V_GAP = 88;
 const ORPHAN_GAP = 96;
 
@@ -164,7 +165,117 @@ function buildRoutes(
     return false;
   };
 
+  const pairKey = (x: string, y: string) => (x < y ? x + "|" + y : y + "|" + x);
+
+  // ── 经典族谱画法：夫妻横线相连，从横线中点垂落，多子女共享一条总线 ──
+  // 双亲（已婚或共同养育，buildUnits 已把他们并格相邻）且都在子女上方才适用。
+  const handledKids = new Set<string>();
+  const coupleKids = new Map<
+    string,
+    { f: string; m: string; kids: Array<{ id: string; n: TreeLayoutNode }> }
+  >();
   for (const [childId, entry] of Object.entries(state.parents)) {
+    const f = entry.fatherId;
+    const m = entry.motherId;
+    if (!f || !m || !byId.has(f) || !byId.has(m)) continue;
+    const child = byId.get(childId);
+    if (!child) continue;
+    const nf = byId.get(f)!;
+    const nm = byId.get(m)!;
+    if (nf.y >= child.y - 2 || nm.y >= child.y - 2) continue;
+    const gapF = nm.x - (nf.x + nf.width);
+    const gapM = nf.x - (nm.x + nm.width);
+    const adjacent =
+      (gapF >= -2 && gapF <= SPOUSE_GAP + 2) ||
+      (gapM >= -2 && gapM <= SPOUSE_GAP + 2);
+    if (!adjacent) continue;
+    const key = pairKey(f, m);
+    const grp = coupleKids.get(key) ?? { f, m, kids: [] };
+    grp.kids.push({ id: childId, n: child });
+    coupleKids.set(key, grp);
+    handledKids.add(childId);
+  }
+
+  for (const { f, m, kids } of coupleKids.values()) {
+    const nf = byId.get(f)!;
+    const nm = byId.get(m)!;
+    const left = nf.x + nf.width <= nm.x ? nf : nm;
+    const right = left === nf ? nm : nf;
+    const midX = (left.x + left.width + right.x) / 2;
+    const midY = left.y + left.height / 2;
+    const bottom = left.y + left.height;
+    const lineage = lineageOf.get(f) ?? lineageOf.get(m) ?? "orphan";
+
+    // 子女按所在行分组（正常都在同一行；跨行是畸形数据，各行各画总线）
+    const rows = new Map<number, Array<{ id: string; n: TreeLayoutNode }>>();
+    for (const k of kids) {
+      const list = rows.get(k.n.y) ?? [];
+      list.push(k);
+      rows.set(k.n.y, list);
+    }
+    for (const [rowY, rowKids] of rows) {
+      rowKids.sort((a, b) => a.n.x - b.n.x);
+      const busY = bottom + (rowY - bottom) / 2;
+      if (rowKids.length === 1) {
+        // 独生子女：一根肘线直达顶边中点
+        const { id, n } = rowKids[0];
+        const cx = n.x + n.width / 2;
+        const d =
+          Math.abs(midX - cx) < 1.5
+            ? "M " + midX + " " + midY + " V " + n.y
+            : "M " + midX + " " + midY + " V " + busY + " H " + cx + " V " + n.y;
+        routes.push({
+          id: "r:" + f + "+" + m + ">" + id,
+          fromId: f,
+          toId: id,
+          kind: "blood",
+          lineage,
+          d,
+          start: { x: midX, y: midY },
+          end: { x: cx, y: n.y },
+        });
+        continue;
+      }
+      // 多子女：主干从横线中点垂落到总线，总线横贯首末孩子，
+      // 再为每个孩子补一根落到顶边中点的短垂线。
+      // 主干/总线只画一次——每个孩子各画全路径会把半透明描边叠深，
+      // 视觉上就不再是「一条水平线」了。
+      const firstCx = rowKids[0].n.x + rowKids[0].n.width / 2;
+      const last = rowKids[rowKids.length - 1];
+      const lastCx = last.n.x + last.n.width / 2;
+      routes.push({
+        id: "r:" + f + "+" + m + ">bus@" + rowY,
+        fromId: f,
+        toId: last.id,
+        kind: "blood",
+        lineage,
+        d:
+          "M " + midX + " " + midY +
+          " V " + busY +
+          " M " + firstCx + " " + busY +
+          " H " + lastCx,
+        start: { x: midX, y: midY },
+        end: { x: lastCx, y: busY },
+      });
+      for (const { id, n } of rowKids) {
+        const cx = n.x + n.width / 2;
+        routes.push({
+          id: "r:" + f + "+" + m + ">drop:" + id,
+          fromId: f,
+          toId: id,
+          kind: "blood",
+          lineage,
+          d: "M " + cx + " " + busY + " V " + n.y,
+          start: { x: cx, y: busY },
+          end: { x: cx, y: n.y },
+        });
+      }
+    }
+  }
+
+  // ── 兜底：单亲 / 不相邻的双亲 —— 各自从卡片下沿肘线连接 ──
+  for (const [childId, entry] of Object.entries(state.parents)) {
+    if (handledKids.has(childId)) continue;
     const child = byId.get(childId);
     if (!child) continue;
     const parents = [entry.fatherId, entry.motherId].filter(
@@ -174,46 +285,6 @@ function buildRoutes(
     const cx = child.x + child.width / 2;
     const ey = child.y;
 
-    // ── 经典族谱画法 ──
-    // 双亲（已婚或共同养育，buildUnits 已把他们并格相邻）且都在子女上方：
-    // 父母先由横线相连（spouse 路由），再从横线中点垂落到子女顶边中点。
-    // 多个子女共享同一条垂线与总线高度，天然长成「一根主干分叉」。
-    if (parents.length === 2 && parents.every((pid) => byId.get(pid)!.y < child.y - 2)) {
-      const nf = byId.get(parents[0])!;
-      const nm = byId.get(parents[1])!;
-      const gapF = nm.x - (nf.x + nf.width);
-      const gapM = nf.x - (nm.x + nm.width);
-      const left =
-        gapF >= -2 && gapF <= SPOUSE_GAP + 2
-          ? nf
-          : gapM >= -2 && gapM <= SPOUSE_GAP + 2
-            ? nm
-            : null;
-      if (left) {
-        const right = left === nf ? nm : nf;
-        const midX = (left.x + left.width + right.x) / 2;
-        const midY = left.y + left.height / 2;
-        const bottom = left.y + left.height;
-        const busY = bottom + (ey - bottom) / 2;
-        const d =
-          Math.abs(midX - cx) < 1.5
-            ? "M " + midX + " " + midY + " V " + ey
-            : "M " + midX + " " + midY + " V " + busY + " H " + cx + " V " + ey;
-        routes.push({
-          id: "r:" + parents[0] + "+" + parents[1] + ">" + childId,
-          fromId: parents[0],
-          toId: childId,
-          kind: "blood",
-          lineage: lineageOf.get(parents[0]) ?? lineageOf.get(childId) ?? "orphan",
-          d,
-          start: { x: midX, y: midY },
-          end: { x: cx, y: ey },
-        });
-        continue;
-      }
-    }
-
-    // ── 兜底：单亲 / 未结婚 / 不相邻的双亲 —— 各自从卡片下沿肘线连接 ──
     const sibs = Object.keys(state.parents)
       .filter((cid) => {
         const a = state.parents[cid];
@@ -300,7 +371,6 @@ function buildRoutes(
   // 后者「添加母亲」不会建婚姻记录，但展示上父母同样并格相连。
   const connectorPairs: Array<[string, string]> = [];
   const seenPair = new Set<string>();
-  const pairKey = (x: string, y: string) => (x < y ? x + "|" + y : y + "|" + x);
   for (const { a, b } of state.spouses) {
     if (!byId.has(a) || !byId.has(b)) continue;
     const key = pairKey(a, b);
@@ -395,8 +465,20 @@ export function layoutFamilyTree(
     list.push(id);
     membersOf.set(unit, list);
   }
+  // 单元内排序：男左女右（族谱惯例），同性别再生年排序；未知性别居中
+  const genderRank = (id: string): number => {
+    const g = working.persons[id]?.gender;
+    if (g === "male") return 0;
+    if (g === "female") return 2;
+    return 1;
+  };
   for (const [unit, members] of membersOf) {
-    members.sort((a, b) => byBirthThenId(working, a, b));
+    members.sort((a, b) => {
+      const ga = genderRank(a);
+      const gb = genderRank(b);
+      if (ga !== gb) return ga - gb;
+      return byBirthThenId(working, a, b);
+    });
   }
 
     const unitPedigreeKey = (unit: string): string => {
