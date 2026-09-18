@@ -12,6 +12,7 @@ import {
   generationLabel,
   pedigreePath,
   pedigreeSortKey,
+  collateralSide,
 } from "./lineage";
 
 export const NODE_W = 208;
@@ -51,6 +52,8 @@ export interface TreeLayoutJunction {
   busRight: number;
   /** 家长竖直车道：双亲各自下落再汇入，避免并成一股 */
   parentLanes: Array<{ parentId: string; x: number; laneY: number }>;
+  /** 子女挂接点 x：与渲染端一致，总线必须盖住这些点 */
+  childAttach: Record<string, number>;
 }
 
 export interface TreeGenerationBand {
@@ -170,11 +173,25 @@ export function layoutFamilyTree(
     members.sort((a, b) => byBirthThenId(working, a, b));
   }
 
-  const unitPedigreeKey = (unit: string): string => {
+    const unitPedigreeKey = (unit: string): string => {
     const members = membersOf.get(unit) ?? [];
     let best = "9";
     for (const id of members) {
-      const key = pedigreeSortKey(pedigreePath(working, id, meId));
+      const path = pedigreePath(working, id, meId);
+      if (path && path.length > 0 && /^[FM]+$/.test(path)) {
+        const key = pedigreeSortKey(path);
+        if (key < best) best = key;
+        continue;
+      }
+      const lineage = lineageOf.get(id);
+      const birth = working.persons[id]?.birthYear ?? "";
+      const side = collateralSide(working, id, meId);
+      let key = "9";
+      if (lineage === "collateral" && side === "paternal") key = "!P" + birth + id;
+      else if (lineage === "sibling") key = "03S" + birth + id;
+      else if (lineage === "affinal" || lineage === "descendant" || lineage === "ego") key = "02E" + id;
+      else if (lineage === "collateral" && side === "maternal") key = "2M" + birth + id;
+      else key = "9" + id;
       if (key < best) best = key;
     }
     return best;
@@ -458,34 +475,92 @@ export function layoutFamilyTree(
       childCx += n.x + n.width / 2;
     }
     childCx /= childIds.length;
-    const sample = childIds[0];
+    const sampleId = childIds[0];
     const sortedChildren = [...childIds].sort((a, b) => {
       const na = byId.get(a) as TreeLayoutNode;
       const nb = byId.get(b) as TreeLayoutNode;
       return na.x + na.width / 2 - (nb.x + nb.width / 2);
     });
-    let busLeft = Number.POSITIVE_INFINITY;
-    let busRight = Number.NEGATIVE_INFINITY;
+
+    // 双亲亲系 → 子女挂接比例（与绘制端同一规则）
+    const attachRatio = (() => {
+      let pat = false;
+      let mat = false;
+      for (const pid of parentIds) {
+        const l = lineageOf.get(pid);
+        if (l === "paternal") pat = true;
+        if (l === "maternal") mat = true;
+      }
+      if (pat && !mat) return 0.28;
+      if (mat && !pat) return 0.72;
+      return 0.5;
+    })();
+
+    const childAttach: Record<string, number> = {};
     for (const cid of sortedChildren) {
       const n = byId.get(cid) as TreeLayoutNode;
-      const cx = n.x + n.width / 2;
-      busLeft = Math.min(busLeft, cx);
-      busRight = Math.max(busRight, cx);
+      childAttach[cid] = n.x + n.width * attachRatio;
     }
-    // 不同家庭的总线在垂直方向错开，减少叠在同一水平线上
+
     const stagger = (junctions.length % 3) * 10;
     const busY = parentBottom + (childTop - parentBottom) * 0.42 + stagger;
+
     const parentLanes = parentIds.map((pid, index) => {
       const n = byId.get(pid) as TreeLayoutNode;
       const cx = n.x + n.width / 2;
       const sign = parentIds.length === 1 ? 0 : index === 0 ? -1 : 1;
+      const pl = lineageOf.get(pid);
+      const sidePull = pl === "paternal" ? -16 : pl === "maternal" ? 16 : 0;
+      // 车道停在「家长中心」与「子女挂接点」之间，不越过到另一侧配偶
+      const targets = sortedChildren.map((cid) => childAttach[cid]);
+      const target =
+        targets.length > 0
+          ? targets.reduce((s, v) => s + v, 0) / targets.length
+          : cx;
+      const laneX =
+        pl === "paternal"
+          ? Math.min(cx + sign * 8, target - 4)
+          : pl === "maternal"
+            ? Math.max(cx + sign * 8, target + 4)
+            : cx + sign * 8 + sidePull;
       return {
         parentId: pid,
-        x: cx + sign * 10,
-        laneY: busY - 14 - index * 8,
+        x: laneX,
+        laneY: busY - 16 - index * 10,
       };
     });
-    const sampleId = childIds[0];
+
+    // 总线必须盖住：所有车道终点 + 所有子女挂接点
+    let busLeft = Number.POSITIVE_INFINITY;
+    let busRight = Number.NEGATIVE_INFINITY;
+    const xs = [...Object.values(childAttach), ...parentLanes.map((l) => l.x)];
+    for (const x of xs) {
+      busLeft = Math.min(busLeft, x);
+      busRight = Math.max(busRight, x);
+    }
+
+    // 非本汇合点家长的配偶（如父亲的现任配偶母亲）：总线不得伸进其卡片
+    for (const cid of sortedChildren) {
+      const child = byId.get(cid) as TreeLayoutNode;
+      for (const sid of getSpouseIds(working, cid)) {
+        if (parentIds.includes(sid)) continue;
+        const sp = byId.get(sid);
+        if (!sp) continue;
+        const sameRow = Math.abs(sp.y - child.y) < 1;
+        if (!sameRow) continue;
+        if (sp.x >= child.x + child.width - 1) {
+          busRight = Math.min(busRight, child.x + child.width + 6);
+        } else if (sp.x + sp.width <= child.x + 1) {
+          busLeft = Math.max(busLeft, child.x - 6);
+        }
+      }
+    }
+    if (busLeft > busRight) {
+      const mid = (busLeft + busRight) / 2;
+      busLeft = mid - 1;
+      busRight = mid + 1;
+    }
+
     junctions.push({
       id: "j:" + key,
       x: (busLeft + busRight) / 2,
@@ -497,6 +572,7 @@ export function layoutFamilyTree(
       busLeft,
       busRight,
       parentLanes,
+      childAttach,
     });
   }
   for (const j of junctions) {
@@ -565,6 +641,11 @@ export function layoutFamilyTree(
     for (const lane of j.parentLanes) {
       lane.x += dx;
       lane.laneY += dy;
+    }
+    if (j.childAttach) {
+      for (const cid of Object.keys(j.childAttach)) {
+        j.childAttach[cid] += dx;
+      }
     }
   }
   for (const b of bands) {

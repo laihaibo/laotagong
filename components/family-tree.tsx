@@ -506,9 +506,20 @@ const TreeScene = memo(function TreeScene({
             (j) => j.childIds.includes(edge.toId) && j.parentIds.includes(edge.fromId)
           );
           if (hasJunction) return null;
-          const fx = from.x + from.width / 2;
+          const pline = layout.lineageOf.get(edge.fromId);
+          const fx =
+            pline === "paternal"
+              ? from.x + from.width * 0.28
+              : pline === "maternal"
+                ? from.x + from.width * 0.72
+                : from.x + from.width / 2;
           const fy = from.y + from.height;
-          const tx = to.x + to.width / 2;
+          const tx =
+            pline === "paternal"
+              ? to.x + to.width * 0.28
+              : pline === "maternal"
+                ? to.x + to.width * 0.72
+                : to.x + to.width / 2;
           const ty = to.y;
           // 无汇合点的单亲连线：按子女 id 错开水平通道
           const hash = edge.toId.split("").reduce((s, ch) => s + ch.charCodeAt(0), 0);
@@ -545,7 +556,9 @@ const TreeScene = memo(function TreeScene({
               {j.childIds.map((cid) => {
                 const child = layout.byId.get(cid);
                 if (!child) return null;
-                const cx = child.x + child.width / 2;
+                // 必须与布局端 childAttach 一致，且总线已覆盖该点，否则线会断开
+                const cx =
+                  j.childAttach?.[cid] ?? child.x + child.width / 2;
                 return (
                   <path
                     key={`cl-${j.id}-${cid}`}
@@ -617,8 +630,8 @@ const TreeScene = memo(function TreeScene({
                   {zodiac && ` · ${zodiac.label}`}
                 </span>
               )}
-              <span className="w-full truncate text-[10px] font-medium text-[var(--accent)]">
-                {kinship.get(node.id) || lineageLabel(lineage) || generationLabel(node.generation)}
+              <span className="w-full truncate text-caption font-medium text-[var(--accent)]">
+                {kinship.get(node.id) || (isMe ? "我" : lineageLabel(lineage) || generationLabel(node.generation))}
               </span>
             </button>
 
