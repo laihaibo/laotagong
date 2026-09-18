@@ -1,6 +1,20 @@
 import { type FamilyState, type Person } from "./family";
 import { computeDistances, pedigreePath } from "./lineage";
 
+/**
+ * 亲属称谓 —— 浙江省三门县主流用法。
+ *
+ * 词表来自用户整理（爸爸妈妈 / 爷爷奶奶 / 外公外婆 / 伯伯伯母 / 叔叔婶婶 /
+ * 姑姑姑丈 / 舅舅舅妈 / 阿姨姨丈 / 太公太婆 / 舅公舅婆 / 姑婆 / 公公婆婆），
+ * 祖辈旁系参照吴语台州片惯例（吴语维基「祖父母」词条、wu-chinese.com）：
+ * 祖辈的兄弟 = 舅公/伯公/叔公，祖辈的姐妹 = 姑婆/姨婆，太公太婆 = 曾祖辈。
+ *
+ * 原则：
+ * - 「外」只跟母系（路径起始 M 算一个，中间嫁入女性的 M 不再叠加）；
+ * - 性别未知的长辈默认按男性分支命名（与 linkChildWithParents 的默认一致）；
+ * - 同辈排行不明时「称大不称小」。
+ */
+
 function genderOf(p: Person | undefined): Person["gender"] {
   return p?.gender ?? "unknown";
 }
@@ -40,34 +54,57 @@ function shareParents(state: FamilyState, a: string, b: string): boolean {
   );
 }
 
+/** 直系尊亲属：爸爸妈妈 → 爷爷奶奶外公外婆 → (外)太公太婆 → (外)老太公太婆 → N世祖 */
 export function ancestorTerm(path: string): string {
   const n = path.length;
-  if (n === 0) return "\u6211";
-  if (n === 1) return path.charAt(0) === "F" ? "\u7236\u4eb2" : "\u6bcd\u4eb2";
-  const core = path.charAt(n - 1) === "F" ? "\u7956\u7236" : "\u7956\u6bcd";
-  const gen = n === 2 ? "" : n === 3 ? "\u66fe" : n === 4 ? "\u9ad8" : String(n - 2) + "\u4e16";
+  if (n === 0) return "我";
+  if (n === 1) return path.charAt(0) === "F" ? "爸爸" : "妈妈";
+  if (n === 2) {
+    if (path === "FF") return "爷爷";
+    if (path === "FM") return "奶奶";
+    if (path === "MF") return "外公";
+    return "外婆";
+  }
   let outer = 0;
   let inner = 0;
   if (path.charAt(0) === "M") outer += 1;
   for (let i = 1; i <= n - 2; i += 1) {
     if (path.charAt(i) === "M") inner += 1;
   }
-  return (outer ? "\u5916" : "") + gen + (inner ? "\u5916" : "") + core;
+  const prefix = "外".repeat(outer + inner);
+  const core = path.charAt(n - 1) === "F" ? "太公" : "太婆";
+  if (n === 3) return prefix + core;
+  if (n === 4) return prefix + "老" + core;
+  return prefix + String(n - 2) + "世祖";
 }
 
 function inLawParentTerm(me: Person, role: "father" | "mother"): string {
   const meMale = genderOf(me) === "male";
-  if (role === "mother") return meMale ? "\u4e08\u6bcd\u5a18" : "\u5a46\u5a46";
-  return meMale ? "\u5cb3\u7236" : "\u516c\u516c";
+  if (role === "mother") return meMale ? "岳母" : "婆婆";
+  return meMale ? "岳父" : "公公";
 }
+
+/** 祖辈旁系长者的配偶：伯公→伯婆、姑婆→姑丈公、舅公→舅婆…… */
+const GRAND_LATERAL_SPOUSE: Record<string, string> = {
+  伯公: "伯婆",
+  叔公: "叔婆",
+  姑婆: "姑丈公",
+  舅公: "舅婆",
+  姨婆: "姨丈公",
+  外伯公: "外伯婆",
+  外叔公: "外叔婆",
+  外姑婆: "外姑丈公",
+  外舅公: "外舅婆",
+  外姨婆: "外姨丈公",
+};
 
 export function kinshipTerm(
   state: FamilyState,
   personId: string,
   meId: string | null
 ): string {
-  if (!meId || !state.persons[meId] || !state.persons[personId]) return "\u4eb2\u5c5e";
-  if (personId === meId) return "\u6211";
+  if (!meId || !state.persons[meId] || !state.persons[personId]) return "亲属";
+  if (personId === meId) return "我";
   const me = state.persons[meId];
   const person = state.persons[personId];
   const path = pedigreePath(state, personId, meId);
@@ -90,24 +127,24 @@ function kinshipInner(
   const myP = state.parents[meId];
 
   if (isSpouse(state, meId, personId)) {
-    if (gMe === "female" && gP === "male") return "\u4e08\u592b";
-    if (gMe === "male" && gP === "female") return "\u59bb\u5b50";
-    return "\u914d\u5076";
+    if (gMe === "female" && gP === "male") return "丈夫";
+    if (gMe === "male" && gP === "female") return "妻子";
+    return "配偶";
   }
 
   const myKids = childIdsOf(state, meId);
   if (myKids.includes(personId)) {
-    if (gP === "male") return "\u513f\u5b50";
-    if (gP === "female") return "\u5973\u513f";
-    return "\u5b50\u5973";
+    if (gP === "male") return "儿子";
+    if (gP === "female") return "女儿";
+    return "子女";
   }
 
   for (const kidId of myKids) {
     if (isSpouse(state, kidId, personId)) {
       const kid = state.persons[kidId];
-      if (genderOf(kid) === "male" && gP === "female") return "\u513f\u5ab3";
-      if (genderOf(kid) === "female" && gP === "male") return "\u5973\u5a7f";
-      return "\u5b50\u5973\u914d\u5076";
+      if (genderOf(kid) === "male" && gP === "female") return "儿媳";
+      if (genderOf(kid) === "female" && gP === "male") return "女婿";
+      return "子女配偶";
     }
   }
 
@@ -120,34 +157,33 @@ function kinshipInner(
 
   for (const sid of mySpouses) {
     if (!shareParents(state, sid, personId)) continue;
-    const spouse = state.persons[sid];
-    const elder = isElder(person, spouse);
+    const elder = isElder(person, state.persons[sid]);
     if (gMe === "male") {
       if (gP === "male") {
-        if (elder === true) return "\u5185\u5144";
-        if (elder === false) return "\u5185\u5f1f";
-        return "\u59bb\u5144\u5f1f";
+        if (elder === true) return "大舅子";
+        if (elder === false) return "小舅子";
+        return "妻兄弟";
       }
-      if (elder === true) return "\u59e8\u59d0";
-      if (elder === false) return "\u59e8\u59b9";
-      return "\u59bb\u59d0\u59b9";
+      if (elder === true) return "大姨子";
+      if (elder === false) return "小姨子";
+      return "妻姐妹";
     }
     if (gP === "male") {
-      if (elder === true) return "\u5927\u4f2f\u5b50";
-      if (elder === false) return "\u5c0f\u53d4\u5b50";
-      return "\u592b\u5144\u5f1f";
+      if (elder === true) return "大伯子";
+      if (elder === false) return "小叔子";
+      return "夫兄弟";
     }
-    if (elder === true) return "\u5927\u59d1\u5b50";
-    if (elder === false) return "\u5c0f\u59d1\u5b50";
-    return "\u592b\u59d0\u59b9";
+    if (elder === true) return "大姑子";
+    if (elder === false) return "小姑子";
+    return "夫姐妹";
   }
 
   const hisP = state.parents[personId];
   if (myP && hisP && shareParents(state, meId, personId)) {
     const elder = isElder(person, me);
-    if (gP === "male") return elder === true ? "\u54e5\u54e5" : elder === false ? "\u5f1f\u5f1f" : "\u5144\u5f1f";
-    if (gP === "female") return elder === true ? "\u59d0\u59d0" : elder === false ? "\u59b9\u59b9" : "\u59d0\u59b9";
-    return "\u540c\u80de";
+    if (gP === "male") return elder === true ? "哥哥" : elder === false ? "弟弟" : "兄弟";
+    if (gP === "female") return elder === true ? "姐姐" : elder === false ? "妹妹" : "姐妹";
+    return "同胞";
   }
 
   for (const sibId of Object.keys(state.persons)) {
@@ -158,13 +194,14 @@ function kinshipInner(
     const sibMale = genderOf(sib) === "male";
     const elder = isElder(sib, me);
     if (sibMale && gP === "female") {
-      return elder === true ? "\u5ac2\u5b50" : elder === false ? "\u5f1f\u5ab3" : "\u5144\u5f1f\u914d\u5076";
+      return elder === true ? "嫂子" : elder === false ? "弟媳" : "兄弟配偶";
     }
     if (!sibMale && gP === "male") {
-      return elder === true ? "\u59d0\u592b" : elder === false ? "\u59b9\u592b" : "\u59d0\u59b9\u914d\u5076";
+      return elder === true ? "姐夫" : elder === false ? "妹夫" : "姐妹配偶";
     }
   }
 
+  // ── 父母的兄弟姐妹：伯伯 / 叔叔 / 姑姑 / 舅舅 / 阿姨 ──
   const parentsOfMe = [myP?.fatherId, myP?.motherId].filter(Boolean) as string[];
   for (const parentId of parentsOfMe) {
     if (!shareParents(state, parentId, personId)) continue;
@@ -172,11 +209,104 @@ function kinshipInner(
     if (viaFather) {
       if (gP === "male") {
         const elder = isElder(person, state.persons[parentId]);
-        return elder === true ? "\u4f2f\u7236" : elder === false ? "\u53d4\u7236" : "\u53d4\u4f2f";
+        return elder === true ? "伯伯" : elder === false ? "叔叔" : "叔伯";
       }
-      return "\u59d1\u6bcd";
+      return "姑姑";
     }
-    return gP === "male" ? "\u8205\u7236" : "\u59e8\u6bcd";
+    return gP === "male" ? "舅舅" : "阿姨";
+  }
+
+  // ── 父母兄弟姐妹的配偶：伯母 / 婶婶 / 姑丈 / 舅妈 / 姨丈 ──
+  if (myP) {
+    for (const sid of Object.keys(state.persons)) {
+      if (sid === meId || sid === personId) continue;
+      const viaFather =
+        myP.fatherId && sid !== myP.fatherId && shareParents(state, sid, myP.fatherId);
+      const viaMother =
+        !viaFather &&
+        myP.motherId !== undefined &&
+        sid !== myP.motherId &&
+        shareParents(state, sid, myP.motherId);
+      if (!viaFather && !viaMother) continue;
+      if (!isSpouse(state, sid, personId)) continue;
+      const sib = state.persons[sid];
+      const sibMale = genderOf(sib) === "male";
+      if (viaFather) {
+        if (sibMale) {
+          const elder = isElder(sib, state.persons[myP.fatherId!]);
+          return elder === false ? "婶婶" : "伯母";
+        }
+        return "姑丈";
+      }
+      return sibMale ? "舅妈" : "姨丈";
+    }
+  }
+
+  // ── 祖辈旁系：伯公 / 叔公 / 姑婆 / 舅公 / 姨婆（含外姓外前缀）及其配偶 ──
+  if (myP) {
+    const gps: Array<{ gid: string; maternal: boolean; g: Person["gender"] }> = [];
+    const fatherP = myP.fatherId ? state.parents[myP.fatherId] : undefined;
+    if (fatherP?.fatherId) {
+      gps.push({
+        gid: fatherP.fatherId,
+        maternal: false,
+        g: genderOf(state.persons[fatherP.fatherId]),
+      });
+    }
+    if (fatherP?.motherId) {
+      gps.push({
+        gid: fatherP.motherId,
+        maternal: false,
+        g: genderOf(state.persons[fatherP.motherId]),
+      });
+    }
+    const motherP = myP.motherId ? state.parents[myP.motherId] : undefined;
+    if (motherP?.fatherId) {
+      gps.push({
+        gid: motherP.fatherId,
+        maternal: true,
+        g: genderOf(state.persons[motherP.fatherId]),
+      });
+    }
+    if (motherP?.motherId) {
+      gps.push({
+        gid: motherP.motherId,
+        maternal: true,
+        g: genderOf(state.persons[motherP.motherId]),
+      });
+    }
+    const grandLateral = new Map<string, string>();
+    for (const sid of Object.keys(state.persons)) {
+      if (sid === meId) continue;
+      for (const { gid, maternal, g } of gps) {
+        if (sid === gid || !shareParents(state, gid, sid)) continue;
+        const wai = maternal ? "外" : "";
+        const gS = genderOf(state.persons[sid]);
+        const elder = isElder(state.persons[sid], state.persons[gid]);
+        let term: string;
+        if (g === "female") {
+          // 奶奶/外婆的兄弟 = 舅公，姐妹 = 姨婆；性别未知默认男分支
+          term = gS === "female" ? wai + "姨婆" : wai + "舅公";
+        } else if (gS === "female") {
+          // 爷爷/外公的姐妹 = 姑婆
+          term = wai + "姑婆";
+        } else {
+          // 爷爷/外公的兄弟：称大不称小
+          term = elder === false ? wai + "叔公" : wai + "伯公";
+        }
+        grandLateral.set(sid, term);
+        break;
+      }
+    }
+    if (grandLateral.has(personId)) {
+      return grandLateral.get(personId)!;
+    }
+    for (const [xId, xTerm] of grandLateral) {
+      if (isSpouse(state, xId, personId)) {
+        const spouseTerm = GRAND_LATERAL_SPOUSE[xTerm];
+        if (spouseTerm) return spouseTerm;
+      }
+    }
   }
 
   for (const [cid, entry] of Object.entries(state.parents)) {
@@ -184,8 +314,8 @@ function kinshipInner(
     if (!pids.includes(personId)) continue;
     if (!myP || !shareParents(state, meId, cid)) continue;
     const childG = genderOf(state.persons[cid]);
-    if (gMe === "male") return childG === "female" ? "\u4f84\u5973" : "\u4f84\u5b50";
-    return childG === "female" ? "\u5916\u751f\u5973" : "\u5916\u751f";
+    if (gMe === "male") return childG === "female" ? "侄女" : "侄子";
+    return childG === "female" ? "外甥女" : "外甥";
   }
 
   if (hisP) {
@@ -194,10 +324,10 @@ function kinshipInner(
       for (const pid of hisParents) {
         if (!pid || !shareParents(state, mid, pid)) continue;
         const fatherSide = mid === myP?.fatherId || pid === myP?.fatherId;
-        const prefix = fatherSide ? "\u5802" : "\u8868";
-        if (gP === "male") return prefix + "\u5144\u5f1f";
-        if (gP === "female") return prefix + "\u59d0\u59b9";
-        return prefix + "\u4eb2";
+        const prefix = fatherSide ? "堂" : "表";
+        if (gP === "male") return prefix + "兄弟";
+        if (gP === "female") return prefix + "姐妹";
+        return prefix + "亲";
       }
     }
   }
@@ -208,8 +338,8 @@ function kinshipInner(
     if (kp.fatherId === kidId || kp.motherId === kidId) {
       const kid = state.persons[kidId];
       const kidMale = genderOf(kid) === "male";
-      if (kidMale) return gP === "female" ? "\u5b59\u5973" : "\u5b59\u5b50";
-      return gP === "female" ? "\u5916\u5b59\u5973" : "\u5916\u5b59";
+      if (kidMale) return gP === "female" ? "孙女" : "孙子";
+      return gP === "female" ? "外孙女" : "外孙";
     }
   }
 
@@ -218,18 +348,18 @@ function kinshipInner(
       const kp = state.parents[kSp];
       if (!kp) continue;
       if (kp.fatherId === personId || kp.motherId === personId) {
-        return gP === "male" ? "\u4eb2\u5bb6\u516c" : "\u4eb2\u5bb6\u6bcd";
+        return gP === "male" ? "亲家公" : "亲家母";
       }
     }
   }
 
   const d = computeDistances(state).get(personId);
-  if (d === null || d === undefined) return "\u4eb2\u5c5e";
-  if (d === -1) return "\u6bcd\u4eb2";
-  if (d === 0) return "\u540c\u8f88";
-  if (d === 1) return "\u5b50\u5973";
-  if (d < 0) return String(Math.abs(d)) + " \u4e16\u7956";
-  return String(d) + " \u4e16\u5b59";
+  if (d === null || d === undefined) return "亲属";
+  if (d === -1) return "长辈";
+  if (d === 0) return "同辈";
+  if (d === 1) return "子女";
+  if (d < 0) return String(Math.abs(d)) + " 世祖";
+  return String(d) + " 世孙";
 }
 
 export function buildKinshipMap(
