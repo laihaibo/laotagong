@@ -16,9 +16,9 @@ import {
 
 export const NODE_W = 208;
 export const NODE_H = 132;
-const H_GAP = 28;
-const SPOUSE_GAP = 10;
-const V_GAP = 64;
+const H_GAP = 56;
+const SPOUSE_GAP = 14;
+const V_GAP = 88;
 const ORPHAN_GAP = 96;
 
 export interface TreeLayoutNode {
@@ -45,6 +45,12 @@ export interface TreeLayoutJunction {
   parentIds: string[];
   childIds: string[];
   lineage: LineageKind;
+  /** 子女总线（横向）所在高度，不同汇合点会错开 */
+  busY: number;
+  busLeft: number;
+  busRight: number;
+  /** 家长竖直车道：双亲各自下落再汇入，避免并成一股 */
+  parentLanes: Array<{ parentId: string; x: number; laneY: number }>;
 }
 
 export interface TreeGenerationBand {
@@ -453,13 +459,44 @@ export function layoutFamilyTree(
     }
     childCx /= childIds.length;
     const sample = childIds[0];
+    const sortedChildren = [...childIds].sort((a, b) => {
+      const na = byId.get(a) as TreeLayoutNode;
+      const nb = byId.get(b) as TreeLayoutNode;
+      return na.x + na.width / 2 - (nb.x + nb.width / 2);
+    });
+    let busLeft = Number.POSITIVE_INFINITY;
+    let busRight = Number.NEGATIVE_INFINITY;
+    for (const cid of sortedChildren) {
+      const n = byId.get(cid) as TreeLayoutNode;
+      const cx = n.x + n.width / 2;
+      busLeft = Math.min(busLeft, cx);
+      busRight = Math.max(busRight, cx);
+    }
+    // 不同家庭的总线在垂直方向错开，减少叠在同一水平线上
+    const stagger = (junctions.length % 3) * 10;
+    const busY = parentBottom + (childTop - parentBottom) * 0.42 + stagger;
+    const parentLanes = parentIds.map((pid, index) => {
+      const n = byId.get(pid) as TreeLayoutNode;
+      const cx = n.x + n.width / 2;
+      const sign = parentIds.length === 1 ? 0 : index === 0 ? -1 : 1;
+      return {
+        parentId: pid,
+        x: cx + sign * 10,
+        laneY: busY - 14 - index * 8,
+      };
+    });
+    const sampleId = childIds[0];
     junctions.push({
       id: "j:" + key,
-      x: (parentCx + childCx) / 2,
-      y: parentBottom + (childTop - parentBottom) / 2,
+      x: (busLeft + busRight) / 2,
+      y: busY,
       parentIds,
-      childIds: [...childIds].sort(),
-      lineage: lineageOf.get(sample) ?? "orphan",
+      childIds: sortedChildren,
+      lineage: lineageOf.get(sampleId) ?? "orphan",
+      busY,
+      busLeft,
+      busRight,
+      parentLanes,
     });
   }
   for (const j of junctions) {
@@ -522,6 +559,13 @@ export function layoutFamilyTree(
   for (const j of junctions) {
     j.x += dx;
     j.y += dy;
+    j.busY += dy;
+    j.busLeft += dx;
+    j.busRight += dx;
+    for (const lane of j.parentLanes) {
+      lane.x += dx;
+      lane.laneY += dy;
+    }
   }
   for (const b of bands) {
     b.y += dy;

@@ -27,6 +27,7 @@ import {
   type LineageKind,
   generationLabel,
 } from "@/lib/lineage";
+import { buildKinshipMap } from "@/lib/kinship";
 import { type TreeLayout, layoutFamilyTree } from "@/lib/tree";
 import { cn } from "@/lib/utils";
 
@@ -75,6 +76,7 @@ export function FamilyTree({
     () => layoutFamilyTree(state, { filter, maxDepth }),
     [state, filter, maxDepth]
   );
+const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 });
 
@@ -294,6 +296,7 @@ export function FamilyTree({
               persons={state.persons}
               meId={state.meId}
               focusId={focusId}
+              kinship={kinship}
               onOpenPerson={onOpenPerson}
               onAddRelation={onAddRelation}
               onSetMe={onSetMe}
@@ -426,6 +429,7 @@ const TreeScene = memo(function TreeScene({
   persons,
   meId,
   focusId,
+  kinship,
   onOpenPerson,
   onAddRelation,
   onSetMe,
@@ -434,6 +438,7 @@ const TreeScene = memo(function TreeScene({
   persons: Record<string, Person>;
   meId: string | null;
   focusId: string | null;
+  kinship: Map<string, string>;
   onOpenPerson: (id: string) => void;
   onAddRelation: (id: string) => void;
   onSetMe: (id: string) => void;
@@ -474,7 +479,6 @@ const TreeScene = memo(function TreeScene({
       >
         {layout.edges.map((edge, index) => {
           const stroke = LINEAGE_STROKE[edge.lineage] ?? "var(--line-other)";
-
           if (edge.kind === "spouse") {
             const from = layout.byId.get(edge.fromId);
             const to = layout.byId.get(edge.toId);
@@ -492,64 +496,66 @@ const TreeScene = memo(function TreeScene({
               />
             );
           }
+          // junction 边由下方 junction 总线统一绘制，避免重复
+          if (edge.kind === "junction") return null;
 
-          if (edge.kind === "junction") {
-            const j = junctionById.get(edge.toId) ?? junctionById.get(edge.fromId);
-            const isDown = edge.toId.startsWith("j:");
-            if (!j) return null;
-            if (isDown) {
-              const parent = layout.byId.get(edge.fromId);
-              if (!parent) return null;
-              return (
-                <path
-                  key={`j-${index}`}
-                  d={`M ${parent.x + parent.width / 2} ${parent.y + parent.height} V ${j.y} H ${j.x}`}
-                  fill="none"
-                  stroke={stroke}
-                  strokeWidth={1.75}
-                  strokeOpacity={0.55}
-                />
-              );
-            }
-            const child = layout.byId.get(edge.toId);
-            if (!child) return null;
-            return (
-              <path
-                key={`j-${index}`}
-                d={`M ${j.x} ${j.y} H ${child.x + child.width / 2} V ${child.y}`}
-                fill="none"
-                stroke={stroke}
-                strokeWidth={1.75}
-                strokeOpacity={0.55}
-              />
-            );
-          }
-
-          // blood：有汇合点时淡化（总线已表达），无汇合点时直连
           const from = layout.byId.get(edge.fromId);
           const to = layout.byId.get(edge.toId);
           if (!from || !to) return null;
-          const hasJunction = layout.junctions.some((j) =>
-            j.childIds.includes(edge.toId) && j.parentIds.includes(edge.fromId)
+          const hasJunction = layout.junctions.some(
+            (j) => j.childIds.includes(edge.toId) && j.parentIds.includes(edge.fromId)
           );
           if (hasJunction) return null;
           const fx = from.x + from.width / 2;
           const fy = from.y + from.height;
           const tx = to.x + to.width / 2;
           const ty = to.y;
-          const midY = fy + (ty - fy) / 2;
+          // 无汇合点的单亲连线：按子女 id 错开水平通道
+          const hash = edge.toId.split("").reduce((s, ch) => s + ch.charCodeAt(0), 0);
+          const lane = fy + (ty - fy) * 0.35 + (hash % 5) * 8;
           return (
             <path
               key={`b-${index}`}
-              d={`M ${fx} ${fy} V ${midY} H ${tx} V ${ty}`}
+              d={`M ${fx} ${fy} V ${lane} H ${tx} V ${ty}`}
               fill="none"
               stroke={stroke}
               strokeWidth={1.75}
-              strokeOpacity={0.45}
+              strokeOpacity={0.5}
             />
           );
         })}
 
+        {/* 亲子总线：家长分车道下落 → 横向总线 → 各子女分叉 */}
+        {layout.junctions.map((j) => {
+          const stroke = LINEAGE_STROKE[j.lineage] ?? "var(--line-other)";
+          return (
+            <g key={j.id} stroke={stroke} strokeWidth={1.85} strokeOpacity={0.62} fill="none">
+              <line x1={j.busLeft} y1={j.busY} x2={j.busRight} y2={j.busY} />
+              {j.parentLanes.map((lane) => {
+                const parent = layout.byId.get(lane.parentId);
+                if (!parent) return null;
+                const cx = parent.x + parent.width / 2;
+                return (
+                  <path
+                    key={`pl-${j.id}-${lane.parentId}`}
+                    d={`M ${cx} ${parent.y + parent.height} V ${lane.laneY} H ${lane.x} V ${j.busY}`}
+                  />
+                );
+              })}
+              {j.childIds.map((cid) => {
+                const child = layout.byId.get(cid);
+                if (!child) return null;
+                const cx = child.x + child.width / 2;
+                return (
+                  <path
+                    key={`cl-${j.id}-${cid}`}
+                    d={`M ${cx} ${j.busY} V ${child.y}`}
+                  />
+                );
+              })}
+            </g>
+          );
+        })}
         {/* 汇合点圆点 */}
         {layout.junctions.map((j) => (
           <circle
@@ -611,11 +617,9 @@ const TreeScene = memo(function TreeScene({
                   {zodiac && ` · ${zodiac.label}`}
                 </span>
               )}
-              {!isMe && lineage !== "orphan" && (
-                <span className="w-full truncate text-[10px] text-[var(--ink-faint)]">
-                  {lineageLabel(lineage)} · {generationLabel(node.generation)}
-                </span>
-              )}
+              <span className="w-full truncate text-[10px] font-medium text-[var(--accent)]">
+                {kinship.get(node.id) || lineageLabel(lineage) || generationLabel(node.generation)}
+              </span>
             </button>
 
             <div
