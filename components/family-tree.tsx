@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   memo,
@@ -8,22 +8,42 @@ import {
   useRef,
   useState,
 } from "react";
-import { Crown, Info, Maximize2, Minus, Plus, Target, UserPlus } from "lucide-react";
+import {
+  Crown,
+  Info,
+  Maximize2,
+  Minus,
+  Plus,
+  Target,
+  UserPlus,
+} from "lucide-react";
 
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
+import { type FamilyState, type Person, lifespanOf, zodiacOf } from "@/lib/family";
 import {
-  type FamilyState,
-  type Person,
-  lifespanOf,
-  zodiacOf,
-} from "@/lib/family";
+  LINEAGE_FILTERS,
+  type LineageFilter,
+  type LineageKind,
+  generationLabel,
+} from "@/lib/lineage";
 import { type TreeLayout, layoutFamilyTree } from "@/lib/tree";
 import { cn } from "@/lib/utils";
 
-const MIN_SCALE = 0.2;
+const MIN_SCALE = 0.18;
 const MAX_SCALE = 2.5;
 const ZOOM_STEP = 1.15;
+
+const LINEAGE_STROKE: Record<LineageKind, string> = {
+  ego: "var(--line-ego)",
+  paternal: "var(--line-paternal)",
+  maternal: "var(--line-maternal)",
+  descendant: "var(--line-descendant)",
+  sibling: "var(--line-other)",
+  affinal: "var(--line-spouse)",
+  collateral: "var(--line-other)",
+  orphan: "var(--line-other)",
+};
 
 interface View {
   x: number;
@@ -31,15 +51,9 @@ interface View {
   scale: number;
 }
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(max, Math.max(min, value));
+const clamp = (v: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, v));
 
-/**
- * 家族树画布：可缩放、可拖拽，坐标原点在内容左上角。
- *
- * 用 CSS transform 而不是 canvas 绘制：节点是真 DOM，
- * 于是头像、文字换行、点击、无障碍全部免费，缩放也不会糊。
- */
 export function FamilyTree({
   state,
   focusId,
@@ -53,11 +67,17 @@ export function FamilyTree({
   onAddRelation: (id: string) => void;
   onSetMe: (id: string) => void;
 }) {
-  const layout = useMemo(() => layoutFamilyTree(state), [state]);
+  const [filter, setFilter] = useState<LineageFilter>("all");
+  const [maxDepth, setMaxDepth] = useState(6);
+  const [showMinimap, setShowMinimap] = useState(true);
+
+  const layout = useMemo(
+    () => layoutFamilyTree(state, { filter, maxDepth }),
+    [state, filter, maxDepth]
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 });
 
-  /** 把某个人移到视口正中 */
   const centerOn = useCallback(
     (id: string | null, scale?: number) => {
       const node = id ? layout.byId.get(id) : null;
@@ -74,7 +94,6 @@ export function FamilyTree({
     [layout, view.scale]
   );
 
-  /** 缩放到整棵树刚好铺满视口 */
   const fitAll = useCallback(() => {
     const el = containerRef.current;
     if (!el || layout.width === 0 || layout.height === 0) return;
@@ -91,16 +110,21 @@ export function FamilyTree({
     });
   }, [layout]);
 
-  // 首次挂载：以「我」为中心
   const didInit = useRef(false);
   useEffect(() => {
-    if (didInit.current || layout.byId.size === 0) return;
-    didInit.current = true;
-    centerOn(state.meId ?? focusId, 1);
+    if (layout.byId.size === 0) return;
+    if (!didInit.current) {
+      didInit.current = true;
+      centerOn(state.meId ?? focusId, 1);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout]);
 
-  /** 以某个屏幕点为中心缩放，手感才对 */
+  useEffect(() => {
+    if (!focusId || !layout.byId.has(focusId)) return;
+    centerOn(focusId);
+  }, [focusId, layout, centerOn]);
+
   const zoomAt = useCallback((clientX: number, clientY: number, factor: number) => {
     const el = containerRef.current;
     if (!el) return;
@@ -114,7 +138,6 @@ export function FamilyTree({
     });
   }, []);
 
-  // wheel 必须用非 passive 的原生监听，否则 preventDefault 无效、页面会跟着滚
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -126,7 +149,6 @@ export function FamilyTree({
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomAt]);
 
-  // 拖拽平移 + 双指缩放
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const panOrigin = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const pinchOrigin = useRef<{ distance: number; scale: number } | null>(null);
@@ -136,9 +158,8 @@ export function FamilyTree({
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
-      // pointerId 已失效时浏览器会抛 NotFoundError；捕获失败不该把页面带崩
+      /* pointerId 失效 */
     }
-
     if (pointers.current.size === 1) {
       panOrigin.current = {
         x: event.clientX,
@@ -163,7 +184,7 @@ export function FamilyTree({
     if (pointers.current.size === 2 && pinchOrigin.current) {
       const [a, b] = [...pointers.current.values()];
       const distance = Math.hypot(a.x - b.x, a.y - b.y);
-      const ratio = distance / pinchOrigin.current.distance;
+      const ratio = distance / (pinchOrigin.current.distance || 1);
       const scale = clamp(pinchOrigin.current.scale * ratio, MIN_SCALE, MAX_SCALE);
       const el = containerRef.current;
       if (!el) return;
@@ -178,9 +199,6 @@ export function FamilyTree({
     }
 
     if (panOrigin.current) {
-      // 先把值取出来。updater 不会立刻执行——React 留到渲染阶段才调用它，
-      // 而那时 pointerup 可能已经把 panOrigin 置空，
-      // 在 updater 里读 ref 就是 null.vx。
       const origin = panOrigin.current;
       const dx = event.clientX - origin.x;
       const dy = event.clientY - origin.y;
@@ -194,109 +212,215 @@ export function FamilyTree({
     if (pointers.current.size === 0) panOrigin.current = null;
   };
 
+  const zoomCenter = (factor: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
+  };
+
   if (layout.nodes.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-body text-[var(--ink-faint)]">还没有成员</p>
+        <p className="text-body text-[var(--ink-faint)]">当前筛选下没有成员</p>
       </div>
     );
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-[var(--glass-edge)] bg-[var(--glass)]/40">
-      <div
-        ref={containerRef}
-        data-tree-canvas
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endPointer}
-        onPointerCancel={endPointer}
-        className="relative min-h-0 flex-1 cursor-grab touch-none select-none overflow-hidden active:cursor-grabbing"
-      >
-        <div
-          className="absolute left-0 top-0"
-          style={{
-            transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
-            transformOrigin: "0 0",
-            width: layout.width,
-            height: layout.height,
-          }}
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      {/* 筛选条：亲系 + 代数 */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {LINEAGE_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => setFilter(f.id)}
+            className={cn(
+              "h-8 rounded-full px-3 text-caption transition-all",
+              filter === f.id
+                ? "glass-btn text-[var(--ink)]"
+                : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
+            )}
+          >
+            {f.label}
+          </button>
+        ))}
+        <div className="mx-1 h-4 w-px bg-[var(--glass-edge)]" />
+        <button
+          type="button"
+          className="h-8 rounded-full border border-[var(--glass-border)] px-3 text-caption text-[var(--ink-soft)]"
+          onClick={() => setMaxDepth((d) => (d >= 8 ? 2 : d + 1))}
+          title="每点一次增加一代"
         >
-          <TreeScene
-            layout={layout}
-            persons={state.persons}
-            meId={state.meId}
-            focusId={focusId}
-            onOpenPerson={onOpenPerson}
-            onAddRelation={onAddRelation}
-            onSetMe={onSetMe}
-          />
+          ±{maxDepth} 代
+        </button>
+        <button
+          type="button"
+          className="h-8 rounded-full border border-[var(--glass-border)] px-3 text-caption text-[var(--ink-soft)]"
+          onClick={() => setShowMinimap((v) => !v)}
+        >
+          小地图
+        </button>
+        <div className="ml-auto flex items-center gap-2 text-[10px] text-[var(--ink-faint)]">
+          <LegendDot color="var(--line-paternal)" label="父系" />
+          <LegendDot color="var(--line-maternal)" label="母系" />
+          <LegendDot color="var(--line-spouse)" label="姻亲" />
+          <LegendDot color="var(--line-descendant)" label="后裔" />
         </div>
       </div>
 
-      {/* 控制条 */}
-      <div className="pointer-events-none absolute bottom-3 right-3 flex flex-col gap-1.5">
-        <Button
-          variant="glass"
-          size="icon-sm"
-          className="pointer-events-auto"
-          onClick={() => zoomAt(
-            (containerRef.current?.getBoundingClientRect().left ?? 0) +
-              (containerRef.current?.clientWidth ?? 0) / 2,
-            (containerRef.current?.getBoundingClientRect().top ?? 0) +
-              (containerRef.current?.clientHeight ?? 0) / 2,
-            ZOOM_STEP
-          )}
-          title="放大"
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-[var(--glass-edge)] bg-[var(--glass)]/40">
+        <div
+          ref={containerRef}
+          data-tree-canvas
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endPointer}
+          onPointerCancel={endPointer}
+          className="relative min-h-0 flex-1 cursor-grab touch-none select-none overflow-hidden active:cursor-grabbing"
         >
-          <Plus className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="glass"
-          size="icon-sm"
-          className="pointer-events-auto"
-          onClick={() => zoomAt(
-            (containerRef.current?.getBoundingClientRect().left ?? 0) +
-              (containerRef.current?.clientWidth ?? 0) / 2,
-            (containerRef.current?.getBoundingClientRect().top ?? 0) +
-              (containerRef.current?.clientHeight ?? 0) / 2,
-            1 / ZOOM_STEP
-          )}
-          title="缩小"
-        >
-          <Minus className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="glass"
-          size="icon-sm"
-          className="pointer-events-auto"
-          onClick={fitAll}
-          title="看全族"
-        >
-          <Maximize2 className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="glass"
-          size="icon-sm"
-          className="pointer-events-auto"
-          onClick={() => centerOn(state.meId ?? focusId, 1)}
-          title="回到「我」"
-        >
-          <Target className="h-4 w-4" />
-        </Button>
+          <div
+            className="absolute left-0 top-0"
+            style={{
+              transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+              transformOrigin: "0 0",
+              width: layout.width,
+              height: layout.height,
+            }}
+          >
+            <TreeScene
+              layout={layout}
+              persons={state.persons}
+              meId={state.meId}
+              focusId={focusId}
+              onOpenPerson={onOpenPerson}
+              onAddRelation={onAddRelation}
+              onSetMe={onSetMe}
+            />
+          </div>
+        </div>
+
+        {showMinimap && (
+          <Minimap
+            layout={layout}
+            view={view}
+            viewport={
+              containerRef.current
+                ? {
+                    w: containerRef.current.clientWidth,
+                    h: containerRef.current.clientHeight,
+                  }
+                : { w: 0, h: 0 }
+            }
+            onJump={(x, y) => {
+              const el = containerRef.current;
+              if (!el) return;
+              const rect = el.getBoundingClientRect();
+              setView((v) => ({
+                ...v,
+                x: rect.width / 2 - x * v.scale,
+                y: rect.height / 2 - y * v.scale,
+              }));
+            }}
+          />
+        )}
+
+        <div className="pointer-events-none absolute bottom-3 right-3 flex flex-col gap-1.5">
+          <Button variant="glass" size="icon-sm" className="pointer-events-auto" onClick={() => zoomCenter(ZOOM_STEP)} title="放大">
+            <Plus className="h-4 w-4" />
+          </Button>
+          <Button variant="glass" size="icon-sm" className="pointer-events-auto" onClick={() => zoomCenter(1 / ZOOM_STEP)} title="缩小">
+            <Minus className="h-4 w-4" />
+          </Button>
+          <Button variant="glass" size="icon-sm" className="pointer-events-auto" onClick={fitAll} title="看全族">
+            <Maximize2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="glass"
+            size="icon-sm"
+            className="pointer-events-auto"
+            onClick={() => centerOn(state.meId ?? focusId, 1)}
+            title="回到「我」"
+          >
+            <Target className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="h-2 w-2 rounded-full" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
 
-/**
- * 画布「场景」：连线 + 所有节点。
- *
- * 单独抽出来并 memo：平移/缩放只改外层 div 的 transform，
- * 场景的 props 不变就整块跳过协调。否则每一次 pointermove 都要重渲染
- * 全部节点（每个节点含头像与三个按钮），人一多就把主线程堵死。
- */
+function Minimap({
+  layout,
+  view,
+  viewport,
+  onJump,
+}: {
+  layout: TreeLayout;
+  view: View;
+  viewport: { w: number; h: number };
+  onJump: (x: number, y: number) => void;
+}) {
+  const W = 112;
+  const H = 80;
+  const sx = layout.width > 0 ? W / layout.width : 1;
+  const sy = layout.height > 0 ? H / layout.height : 1;
+  const s = Math.min(sx, sy);
+  const vx = (-view.x / view.scale) * s;
+  const vy = (-view.y / view.scale) * s;
+  const vw = (viewport.w / view.scale) * s;
+  const vh = (viewport.h / view.scale) * s;
+
+  return (
+    <button
+      type="button"
+      className="glass pointer-events-auto absolute bottom-3 left-3 overflow-hidden rounded-xl"
+      style={{ width: W, height: H }}
+      title="点击跳转"
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const px = ((e.clientX - rect.left) / s) + (layout.width > 0 ? 0 : 0);
+        const py = (e.clientY - rect.top) / s;
+        onJump(px, py);
+      }}
+    >
+      <svg width={W} height={H} className="absolute inset-0">
+        {layout.nodes.map((n) => (
+          <rect
+            key={n.id}
+            x={n.x * s}
+            y={n.y * s}
+            width={Math.max(2, n.width * s)}
+            height={Math.max(2, n.height * s)}
+            rx={1}
+            fill={LINEAGE_STROKE[n.lineage] ?? "var(--line-other)"}
+            opacity={n.lineage === "ego" ? 0.95 : 0.45}
+          />
+        ))}
+        <rect
+          x={vx}
+          y={vy}
+          width={Math.max(8, vw)}
+          height={Math.max(6, vh)}
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth={1.2}
+        />
+      </svg>
+    </button>
+  );
+}
+
 const TreeScene = memo(function TreeScene({
   layout,
   persons,
@@ -314,143 +438,233 @@ const TreeScene = memo(function TreeScene({
   onAddRelation: (id: string) => void;
   onSetMe: (id: string) => void;
 }) {
+  const junctionById = useMemo(() => {
+    const m = new Map<string, { x: number; y: number }>();
+    for (const j of layout.junctions) m.set(j.id, { x: j.x, y: j.y });
+    return m;
+  }, [layout.junctions]);
+
   return (
     <>
-      {/* 连线画在节点下层 */}
-          <svg
-            className="pointer-events-none absolute left-0 top-0"
-            width={layout.width}
-            height={layout.height}
-            aria-hidden
-          >
-            {layout.edges.map((edge) => {
-              const from = layout.byId.get(edge.fromId);
-              const to = layout.byId.get(edge.toId);
-              if (!from || !to) return null;
-              const fx = from.x + from.width / 2;
-              const fy = from.y + from.height;
-              const tx = to.x + to.width / 2;
-              const ty = to.y;
+      {/* 代际带 */}
+      {layout.bands.map((band) => (
+        <div
+          key={`band-${band.generation}`}
+          className="pointer-events-none absolute left-0 w-full"
+          style={{
+            top: band.y - 22,
+            height: 22,
+            opacity: 0.7,
+          }}
+        >
+          <div className="flex h-full items-end px-2">
+            <span className="rounded-t-md bg-[var(--glass-strong)] px-2 py-0.5 text-[10px] tracking-wide text-[var(--ink-faint)]">
+              {band.label}
+            </span>
+          </div>
+          <div className="absolute bottom-0 left-0 h-px w-full bg-[var(--glass-edge)]" />
+        </div>
+      ))}
 
-              if (edge.kind === "spouse") {
-                // 夫妻：两点之间一条短横线，同高
-                return (
-                  <line
-                    key={`s-${edge.fromId}-${edge.toId}`}
-                    x1={from.x + from.width}
-                    y1={from.y + from.height / 2}
-                    x2={to.x}
-                    y2={to.y + to.height / 2}
-                    stroke="var(--accent)"
-                    strokeWidth={2}
-                    strokeOpacity={0.45}
-                  />
-                );
-              }
+      <svg
+        className="pointer-events-none absolute left-0 top-0"
+        width={layout.width}
+        height={layout.height}
+        aria-hidden
+      >
+        {layout.edges.map((edge, index) => {
+          const stroke = LINEAGE_STROKE[edge.lineage] ?? "var(--line-other)";
 
-              // 血亲：竖-横-竖的折线，比斜线更像族谱
-              const midY = fy + (ty - fy) / 2;
+          if (edge.kind === "spouse") {
+            const from = layout.byId.get(edge.fromId);
+            const to = layout.byId.get(edge.toId);
+            if (!from || !to) return null;
+            return (
+              <line
+                key={`s-${index}`}
+                x1={from.x + from.width}
+                y1={from.y + from.height / 2}
+                x2={to.x}
+                y2={to.y + to.height / 2}
+                stroke="var(--line-spouse)"
+                strokeWidth={2}
+                strokeOpacity={0.7}
+              />
+            );
+          }
+
+          if (edge.kind === "junction") {
+            const j = junctionById.get(edge.toId) ?? junctionById.get(edge.fromId);
+            const isDown = edge.toId.startsWith("j:");
+            if (!j) return null;
+            if (isDown) {
+              const parent = layout.byId.get(edge.fromId);
+              if (!parent) return null;
               return (
                 <path
-                  key={`b-${edge.fromId}-${edge.toId}`}
-                  d={`M ${fx} ${fy} V ${midY} H ${tx} V ${ty}`}
+                  key={`j-${index}`}
+                  d={`M ${parent.x + parent.width / 2} ${parent.y + parent.height} V ${j.y} H ${j.x}`}
                   fill="none"
-                  stroke="var(--glass-edge)"
-                  strokeWidth={2}
+                  stroke={stroke}
+                  strokeWidth={1.75}
+                  strokeOpacity={0.55}
                 />
               );
-            })}
-          </svg>
-
-          {layout.nodes.map((node) => {
-            const person = persons[node.id];
-            if (!person) return null;
-            const isMe = meId === node.id;
-            const isFocus = focusId === node.id;
-            const years =
-              person.birthYear || person.deathYear
-                ? `${person.birthYear || "?"}–${person.deathYear || ""}`
-                : "";
-            const age = lifespanOf(person);
-            const zodiac = zodiacOf(person.birthYear);
-
+            }
+            const child = layout.byId.get(edge.toId);
+            if (!child) return null;
             return (
-              <div
-                key={node.id}
-                data-tree-node
-                style={{
-                  // position 必须内联：.glass-card 里未分层的 position:relative
-                  // 在级联上压过 @layer utilities 里的 absolute 工具类
-                  // （未分层样式优先于一切 layer），卡片会掉回文档流竖着摞，
-                  // 新成员看起来叠在老成员身上。内联样式高于一切类规则。
-                  position: "absolute",
-                  left: node.x,
-                  top: node.y,
-                  width: node.width,
-                  height: node.height,
-                }}
-                className={cn(
-                  "glass-card absolute flex items-stretch overflow-hidden rounded-2xl",
-                  isMe && "me",
-                  isFocus && "focused"
-                )}
-              >
-                {/* 主体：看详情 */}
-                <button
-                  type="button"
-                  onClick={() => onOpenPerson(node.id)}
-                  className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-2 text-center"
-                >
-                  <Avatar person={person} size={isMe ? "sm" : "xs"} />
-                  <span className="w-full truncate text-caption font-medium text-[var(--ink)]">
-                    {person.name}
-                  </span>
-                  {years && (
-                    <span className="w-full truncate text-caption text-[var(--ink-faint)]">
-                      {years}
-                      {age !== null && ` · ${age}`}
-                      {zodiac && ` · ${zodiac.label}`}
-                    </span>
-                  )}
-                </button>
-
-                {/* 三个动作竖排在卡片右侧：增加关系 / 详情 / 设为「我」
-                    必须 onPointerDown 阻止冒泡，否则会顺手把画布拖起来 */}
-                {/* 每个按钮 44×44 —— Apple 的最小点击区。
-                    挤在一起必然误触，宁可把卡片做大。 */}
-                <div
-                  className="flex w-11 shrink-0 flex-col border-l border-[var(--glass-edge)]"
-                  onPointerDown={(e) => e.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onAddRelation(node.id)}
-                    title="增加关系"
-                    className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
-                  >
-                    <UserPlus className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onOpenPerson(node.id)}
-                    title="详情"
-                    className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
-                  >
-                    <Info className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onSetMe(node.id)}
-                    disabled={isMe}
-                    title="设为「我」"
-                    className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--accent)] disabled:opacity-30"
-                  >
-                    <Crown className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+              <path
+                key={`j-${index}`}
+                d={`M ${j.x} ${j.y} H ${child.x + child.width / 2} V ${child.y}`}
+                fill="none"
+                stroke={stroke}
+                strokeWidth={1.75}
+                strokeOpacity={0.55}
+              />
             );
-          })}
+          }
+
+          // blood：有汇合点时淡化（总线已表达），无汇合点时直连
+          const from = layout.byId.get(edge.fromId);
+          const to = layout.byId.get(edge.toId);
+          if (!from || !to) return null;
+          const hasJunction = layout.junctions.some((j) =>
+            j.childIds.includes(edge.toId) && j.parentIds.includes(edge.fromId)
+          );
+          if (hasJunction) return null;
+          const fx = from.x + from.width / 2;
+          const fy = from.y + from.height;
+          const tx = to.x + to.width / 2;
+          const ty = to.y;
+          const midY = fy + (ty - fy) / 2;
+          return (
+            <path
+              key={`b-${index}`}
+              d={`M ${fx} ${fy} V ${midY} H ${tx} V ${ty}`}
+              fill="none"
+              stroke={stroke}
+              strokeWidth={1.75}
+              strokeOpacity={0.45}
+            />
+          );
+        })}
+
+        {/* 汇合点圆点 */}
+        {layout.junctions.map((j) => (
+          <circle
+            key={j.id}
+            cx={j.x}
+            cy={j.y}
+            r={3}
+            fill={LINEAGE_STROKE[j.lineage] ?? "var(--line-other)"}
+            opacity={0.85}
+          />
+        ))}
+      </svg>
+
+      {layout.nodes.map((node) => {
+        const person = persons[node.id];
+        if (!person) return null;
+        const isMe = meId === node.id;
+        const isFocus = focusId === node.id;
+        const years =
+          person.birthYear || person.deathYear
+            ? `${person.birthYear || "?"}–${person.deathYear || ""}`
+            : "";
+        const age = lifespanOf(person);
+        const zodiac = zodiacOf(person.birthYear);
+        const lineage = node.lineage;
+
+        return (
+          <div
+            key={node.id}
+            data-tree-node
+            data-lineage={lineage}
+            style={{
+              position: "absolute",
+              left: node.x,
+              top: node.y,
+              width: node.width,
+              height: node.height,
+              borderLeft: `3px solid ${LINEAGE_STROKE[lineage] ?? "transparent"}`,
+            }}
+            className={cn(
+              "glass-card absolute flex items-stretch overflow-hidden rounded-2xl",
+              isMe && "me",
+              isFocus && "focused"
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => onOpenPerson(node.id)}
+              className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-2 text-center"
+            >
+              <Avatar person={person} size={isMe ? "sm" : "xs"} />
+              <span className="w-full truncate text-caption font-medium text-[var(--ink)]">
+                {person.name}
+              </span>
+              {years && (
+                <span className="w-full truncate text-caption text-[var(--ink-faint)]">
+                  {years}
+                  {age !== null && ` · ${age}`}
+                  {zodiac && ` · ${zodiac.label}`}
+                </span>
+              )}
+              {!isMe && lineage !== "orphan" && (
+                <span className="w-full truncate text-[10px] text-[var(--ink-faint)]">
+                  {lineageLabel(lineage)} · {generationLabel(node.generation)}
+                </span>
+              )}
+            </button>
+
+            <div
+              className="flex w-11 shrink-0 flex-col border-l border-[var(--glass-edge)]"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => onAddRelation(node.id)}
+                title="增加关系"
+                className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
+              >
+                <UserPlus className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenPerson(node.id)}
+                title="详情"
+                className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
+              >
+                <Info className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onSetMe(node.id)}
+                disabled={isMe}
+                title="设为「我」"
+                className="flex flex-1 items-center justify-center text-[var(--ink-soft)] transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--accent)] disabled:opacity-30"
+              >
+                <Crown className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </>
   );
 });
+
+function lineageLabel(kind: LineageKind): string {
+  const map: Record<LineageKind, string> = {
+    ego: "我",
+    paternal: "父系",
+    maternal: "母系",
+    descendant: "后裔",
+    sibling: "同辈",
+    affinal: "姻亲",
+    collateral: "旁系",
+    orphan: "",
+  };
+  return map[kind] ?? "";
+}

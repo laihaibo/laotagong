@@ -436,3 +436,21 @@ select option {
 }
 
 .theme-probe{color:red}
+
+/* 亲系连线色 */
+:root {
+  --line-paternal: #0284c7;
+  --line-maternal: #c026d3;
+  --line-spouse: #d97706;
+  --line-descendant: #059669;
+  --line-ego: #2563eb;
+  --line-other: rgba(15, 23, 42, 0.22);
+}
+.dark {
+  --line-paternal: #38bdf8;
+  --line-maternal: #e879f9;
+  --line-spouse: #fbbf24;
+  --line-descendant: #34d399;
+  --line-ego: #60a5fa;
+  --line-other: rgba(241, 245, 249, 0.22);
+}
