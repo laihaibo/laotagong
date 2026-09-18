@@ -158,12 +158,10 @@ function buildRoutes(
     return false;
   };
 
-  const childRatio = (pid: string): number => {
-    const l = lineageOf.get(pid);
-    if (l === "paternal") return 0.32;
-    if (l === "maternal") return 0.68;
-    return 0.5;
-  };
+  const isMarriedPair = (a: string, b: string): boolean =>
+    state.spouses.some(
+      (s) => (s.a === a && s.b === b) || (s.a === b && s.b === a)
+    );
 
   for (const [childId, entry] of Object.entries(state.parents)) {
     const child = byId.get(childId);
@@ -171,6 +169,54 @@ function buildRoutes(
     const parents = [entry.fatherId, entry.motherId].filter(
       (p): p is string => typeof p === "string" && byId.has(p)
     );
+    // 子女一律挂在卡片顶边中点
+    const cx = child.x + child.width / 2;
+    const ey = child.y;
+
+    // ── 经典族谱画法 ──
+    // 双亲已结婚、卡片在单元内相邻、且都在子女上方：
+    // 夫妻先由横线相连（spouse 路由），再从横线中点垂落到子女顶边中点。
+    // 多个子女共享同一条垂线与总线高度，天然长成「一根主干分叉」。
+    if (
+      parents.length === 2 &&
+      isMarriedPair(parents[0], parents[1]) &&
+      parents.every((pid) => byId.get(pid)!.y < child.y - 2)
+    ) {
+      const nf = byId.get(parents[0])!;
+      const nm = byId.get(parents[1])!;
+      const gapF = nm.x - (nf.x + nf.width);
+      const gapM = nf.x - (nm.x + nm.width);
+      const left =
+        gapF >= -2 && gapF <= SPOUSE_GAP + 2
+          ? nf
+          : gapM >= -2 && gapM <= SPOUSE_GAP + 2
+            ? nm
+            : null;
+      if (left) {
+        const right = left === nf ? nm : nf;
+        const midX = (left.x + left.width + right.x) / 2;
+        const midY = left.y + left.height / 2;
+        const bottom = left.y + left.height;
+        const busY = bottom + (ey - bottom) / 2;
+        const d =
+          Math.abs(midX - cx) < 1.5
+            ? "M " + midX + " " + midY + " V " + ey
+            : "M " + midX + " " + midY + " V " + busY + " H " + cx + " V " + ey;
+        routes.push({
+          id: "r:" + parents[0] + "+" + parents[1] + ">" + childId,
+          fromId: parents[0],
+          toId: childId,
+          kind: "blood",
+          lineage: lineageOf.get(parents[0]) ?? lineageOf.get(childId) ?? "orphan",
+          d,
+          start: { x: midX, y: midY },
+          end: { x: cx, y: ey },
+        });
+        continue;
+      }
+    }
+
+    // ── 兜底：单亲 / 未结婚 / 不相邻的双亲 —— 各自从卡片下沿肘线连接 ──
     const sibs = Object.keys(state.parents)
       .filter((cid) => {
         const a = state.parents[cid];
@@ -189,14 +235,11 @@ function buildRoutes(
       const parent = byId.get(pid);
       if (!parent) return;
       const pl = lineageOf.get(pid) ?? "orphan";
-      const ratio = childRatio(pid);
       // 双亲各占卡片下沿的 40% / 60% 点，两根线不重叠
       const pRatio =
         parents.length >= 2 ? (pIndex === 0 ? 0.4 : 0.6) : 0.5;
       const sx = parent.x + parent.width * pRatio;
       const sy = parent.y + parent.height;
-      const ex = child.x + child.width * ratio;
-      const ey = child.y;
 
       let d: string;
       let start = { x: sx, y: sy };
@@ -205,9 +248,9 @@ function buildRoutes(
         // 常规向下肘线只能从下方爬回子女顶边，那根竖线会整段穿过
         // 子女卡片背后。改从家长顶边出发，沿行上方的空带绕到子女顶边。
         const rise = parent.y - 28;
-        d = "M " + sx + " " + parent.y + " V " + rise + " H " + ex + " V " + ey;
+        d = "M " + sx + " " + parent.y + " V " + rise + " H " + cx + " V " + ey;
         start = { x: sx, y: parent.y };
-      } else if (Math.abs(sx - ex) < 1.5) {
+      } else if (Math.abs(sx - cx) < 1.5) {
         d = "M " + sx + " " + sy + " V " + ey;
       } else {
         const gap = Math.max(ey - sy, 8);
@@ -215,50 +258,27 @@ function buildRoutes(
         const lineageBias = pl === "paternal" ? 0 : pl === "maternal" ? 10 : 5;
         const channel =
           sy + gap * 0.4 + lineageBias + (pIndex % 2) * 12 + ((sibIndex < 0 ? 0 : sibIndex) % 3) * 5;
-        let hMin = Math.min(sx, ex);
-        let hMax = Math.max(sx, ex);
+        let hMin = Math.min(sx, cx);
+        let hMax = Math.max(sx, cx);
+        // 同排的非家长成员：横向通道不得伸进其卡片
         for (const sid of Object.keys(state.persons)) {
           if (sid === pid || sid === childId) continue;
           const sp = byId.get(sid);
-          if (!sp) continue;
-          const sameRowAsChild = Math.abs(sp.y - child.y) < 2;
-          const sameRowAsParent = Math.abs(sp.y - parent.y) < 2;
-          if (!sameRowAsChild && !sameRowAsParent) continue;
-          // 同排的非家长成员：横向通道不得伸进其卡片
-          if (sameRowAsChild && sid !== pid) {
-            const isParentOfChild = parents.includes(sid);
-            if (!isParentOfChild) {
-              if (sp.x >= child.x + child.width - 2) {
-                // 成员在子女右侧：通道右端最多到挂接点
-                hMax = Math.min(hMax, child.x + child.width * ratio + 2);
-              } else if (sp.x + sp.width <= child.x + 2) {
-                hMin = Math.max(hMin, child.x + child.width * ratio - 2);
-              }
-            }
+          if (!sp || Math.abs(sp.y - child.y) >= 2) continue;
+          if (parents.includes(sid)) continue;
+          if (sp.x >= child.x + child.width - 2) {
+            hMax = Math.min(hMax, cx + 2);
+          } else if (sp.x + sp.width <= child.x + 2) {
+            hMin = Math.max(hMin, cx - 2);
           }
-          // 父系/母系的线各守本侧半区，不跨过子女中线
-          if (pl === "paternal") {
-            hMax = Math.min(hMax, child.x + child.width * 0.5);
-            hMin = Math.max(hMin, Math.min(sx, parent.x));
-          }
-          if (pl === "maternal") {
-            hMin = Math.max(hMin, child.x + child.width * 0.5);
-            hMax = Math.min(hMax, Math.max(sx, parent.x + parent.width));
-          }
-        }
-        if (pl === "paternal") {
-          hMax = Math.min(hMax, Math.max(ex, child.x + child.width * 0.32));
-        }
-        if (pl === "maternal") {
-          hMin = Math.max(hMin, Math.min(ex, child.x + child.width * 0.68));
         }
         if (hMin > hMax) {
-          hMin = Math.min(sx, ex);
-          hMax = Math.max(sx, ex);
+          hMin = Math.min(sx, cx);
+          hMax = Math.max(sx, cx);
         }
-        // 横向通道的落点 x 夹在 [hMin,hMax] 内；可能与 ex 不同，
+        // 横向通道的落点 x 夹在 [hMin,hMax] 内；可能与 cx 不同，
         // 但仍落在子女顶边上，线不会悬空
-        const hx2 = Math.max(hMin, Math.min(hMax, ex));
+        const hx2 = Math.max(hMin, Math.min(hMax, cx));
         d =
           "M " + sx + " " + sy +
           " V " + channel +
@@ -274,7 +294,7 @@ function buildRoutes(
         lineage: pl === "orphan" ? lineageOf.get(childId) ?? "orphan" : pl,
         d,
         start,
-        end: { x: ex, y: ey },
+        end: { x: cx, y: ey },
       });
     });
   }

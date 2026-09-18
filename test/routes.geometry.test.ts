@@ -77,24 +77,27 @@ describe("双系三代家庭的基本连线几何", () => {
 
   it("每位血亲都有对应的 blood 路由", () => {
     const ids = layout.routes.filter((r) => r.kind === "blood").map((r) => r.id);
-    expect(ids).toContain("r:PGF>F");
-    expect(ids).toContain("r:PGM>F");
-    expect(ids).toContain("r:MGF>M");
-    expect(ids).toContain("r:MGM>M");
-    expect(ids).toContain("r:F>ME");
-    expect(ids).toContain("r:M>ME");
+    expect(ids).toContain("r:PGF+PGM>F");
+    expect(ids).toContain("r:MGF+MGM>M");
+    expect(ids).toContain("r:F+M>ME");
   });
 
-  it("blood 路由两端都落在对应卡片的边缘范围内", () => {
+  it("blood 路由终点落在子女顶边中点，起点在双亲一侧", () => {
     for (const r of layout.routes.filter((x) => x.kind === "blood")) {
-      const from = layout.byId.get(r.fromId)!;
       const to = layout.byId.get(r.toId)!;
-      expect(r.start.y).toBeCloseTo(from.y + from.height, 0);
-      expect(r.start.x).toBeGreaterThanOrEqual(from.x - 2);
-      expect(r.start.x).toBeLessThanOrEqual(from.x + from.width + 2);
+      // 子女挂接点：顶边中点
+      expect(r.end.x, r.id + " 未落在子女顶边中点").toBeCloseTo(to.x + to.width / 2, 0);
       expect(r.end.y).toBeCloseTo(to.y, 0);
-      expect(r.end.x).toBeGreaterThanOrEqual(to.x - 2);
-      expect(r.end.x).toBeLessThanOrEqual(to.x + to.width + 2);
+      // 起点：在双亲卡片的水平范围内（夫妻横线中点或家长下沿）
+      const entry = state.parents[r.toId];
+      const parentNodes = [entry.fatherId, entry.motherId]
+        .filter((id): id is string => Boolean(id))
+        .map((id) => layout.byId.get(id)!)
+        .filter(Boolean);
+      const xs = parentNodes.flatMap((p) => [p.x, p.x + p.width]);
+      expect(r.start.x).toBeGreaterThanOrEqual(Math.min(...xs) - 2);
+      expect(r.start.x).toBeLessThanOrEqual(Math.max(...xs) + 2);
+      expect(r.start.y).toBeLessThan(to.y);
     }
   });
 
@@ -112,7 +115,7 @@ describe("双系三代家庭的基本连线几何", () => {
 
   it("父系到父亲的线不穿过母亲卡片", () => {
     const m = layout.byId.get("M")!;
-    for (const id of ["r:PGF>F", "r:PGM>F"]) {
+    for (const id of ["r:PGF+PGM>F"]) {
       const r = layout.routes.find((x) => x.id === id)!;
       for (const p of parsePathPoints(r.d)) {
         expect(inBox(p, m), id + " touches M at " + p.x + "," + p.y).toBe(false);
@@ -122,7 +125,7 @@ describe("双系三代家庭的基本连线几何", () => {
 
   it("母系到母亲的线不穿过父亲卡片", () => {
     const f = layout.byId.get("F")!;
-    for (const id of ["r:MGF>M", "r:MGM>M"]) {
+    for (const id of ["r:MGF+MGM>M"]) {
       const r = layout.routes.find((x) => x.id === id)!;
       for (const p of parsePathPoints(r.d)) {
         expect(inBox(p, f), id + " touches F at " + p.x + "," + p.y).toBe(false);
@@ -131,8 +134,8 @@ describe("双系三代家庭的基本连线几何", () => {
   });
 
   it("父系与母系的横向通道左右分离", () => {
-    const pat = parsePathPoints(layout.routes.find((r) => r.id === "r:PGF>F")!.d);
-    const mat = parsePathPoints(layout.routes.find((r) => r.id === "r:MGF>M")!.d);
+    const pat = parsePathPoints(layout.routes.find((r) => r.id === "r:PGF+PGM>F")!.d);
+    const mat = parsePathPoints(layout.routes.find((r) => r.id === "r:MGF+MGM>M")!.d);
     // 父系路径的最大 x 必须小于母系路径的最小 x
     const patMax = Math.max(...pat.map((p) => p.x));
     const matMin = Math.min(...mat.map((p) => p.x));
@@ -199,11 +202,32 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
       p.x <= n.x + n.width + 2 &&
       p.y >= n.y - 2 &&
       p.y <= n.y + n.height + 2;
+    const insideAnyCard = (p: { x: number; y: number }) =>
+      layout.nodes.some(
+        (n) =>
+          p.x > n.x + 2 &&
+          p.x < n.x + n.width - 2 &&
+          p.y > n.y + 2 &&
+          p.y < n.y + n.height - 2
+      );
     for (const route of layout.routes) {
       const from = layout.byId.get(route.fromId);
       const to = layout.byId.get(route.toId);
       if (!from || !to) continue;
-      expect(onEdge(route.start, from), `${route.id} 起点不在 ${route.fromId} 边缘上`).toBe(true);
+      // 起点要么贴在 from 卡片边缘（兜底肘线 / 夫妻线），
+      // 要么是「夫妻横线中点垂落」——悬在双亲两卡之间的空隙里
+      const entry = state.parents[route.toId];
+      const parentNodes = [entry?.fatherId, entry?.motherId]
+        .filter((id): id is string => Boolean(id))
+        .map((id) => layout.byId.get(id)!);
+      const xs = parentNodes.flatMap((p) => [p.x, p.x + p.width]);
+      const startOnMarriageBar =
+        !insideAnyCard(route.start) &&
+        xs.length > 0 &&
+        route.start.x >= Math.min(...xs) - 2 &&
+        route.start.x <= Math.max(...xs) + 2;
+      const startOk = onEdge(route.start, from) || startOnMarriageBar;
+      expect(startOk, `${route.id} 起点悬空`).toBe(true);
       expect(onEdge(route.end, to), `${route.id} 终点不在 ${route.toId} 边缘上`).toBe(true);
     }
   }
