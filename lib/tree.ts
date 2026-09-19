@@ -297,26 +297,36 @@ function buildRoutes(
         });
         continue;
       }
-      // 多子女：主干从横线中点垂落到总线，总线横贯首末孩子，
-      // 再为每个孩子补一根落到顶边中点的短垂线。
-      // 主干/总线只画一次——每个孩子各画全路径会把半透明描边叠深，
-      // 视觉上就不再是「一条水平线」了。
-      const firstCx = rowKids[0].n.x + rowKids[0].n.width / 2;
-      const last = rowKids[rowKids.length - 1];
-      const lastCx = last.n.x + last.n.width / 2;
+      // 多子女：主干从横线中点垂落到总线，再为每个孩子补一根落到
+      // 顶边中点的短垂线。总线必须同时覆盖中点与首末孩子——孩子全在
+      // 横线一侧时，总线若只画到孩子中心，主干的落点就悬在总线之外，
+      // 视觉上断线。主干/总线只画一次，避免半透明描边叠深。
+      const centers = rowKids.map((k) => k.n.x + k.n.width / 2);
+      const busL = Math.min(midX, ...centers);
+      const busR = Math.max(midX, ...centers);
+      // 挂接元数据锚在离横线中点最远的孩子上（总线必然画到它）
+      let far = rowKids[0];
+      let farCx = centers[0];
+      for (let i = 1; i < rowKids.length; i += 1) {
+        if (Math.abs(centers[i] - midX) > Math.abs(farCx - midX)) {
+          far = rowKids[i];
+          farCx = centers[i];
+        }
+      }
+      const nearX = farCx === busL ? busR : busL;
       routes.push({
         id: "r:" + f + "+" + m + ">bus@" + rowY,
         fromId: f,
-        toId: last.id,
+        toId: far.id,
         kind: "blood",
         lineage,
         d:
           "M " + midX + " " + midY +
           " V " + busY +
-          " M " + firstCx + " " + busY +
-          " H " + lastCx,
+          " M " + nearX + " " + busY +
+          " H " + farCx,
         start: { x: midX, y: midY },
-        end: { x: lastCx, y: busY },
+        end: { x: farCx, y: busY },
       });
       for (const { id, n } of rowKids) {
         const cx = n.x + n.width / 2;

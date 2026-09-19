@@ -135,13 +135,18 @@ describe("族谱布局：父系偏左、母系偏右 + 汇合点", () => {
     expect(layout.byId.get("PGF")!.lineage).toBe("paternal");
   });
 
-  it("通往「我」的血亲线起点都在子女上方", () => {
+  it("通往「我」的血亲线起点都在子女上方，且有垂线落到顶边中点", () => {
     const me = layout.byId.get("ME")!;
+    const meCx = me.x + me.width / 2;
     const toMe = layout.routes.filter((r) => r.kind === "blood" && r.toId === "ME");
     expect(toMe.length).toBeGreaterThan(0);
     for (const r of toMe) {
       expect(r.start.y).toBeLessThan(me.y);
-      expect(r.end.y).toBe(me.y);
     }
+    // 主干/总线的终点锚在总线上，落到孩子顶边中点的是那根短垂线
+    const landing = toMe.find(
+      (r) => r.end.y === me.y && Math.abs(r.end.x - meCx) < 0.5
+    );
+    expect(landing, "缺少落到「我」顶边中点的垂线").toBeTruthy();
   });
 });

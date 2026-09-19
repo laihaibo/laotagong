@@ -186,12 +186,116 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
     return bad;
   }
 
+  /** 按大写 M 把 d 拆成若干段子路径，各自解析成折线点列 */
+  function subpathPolylines(d: string): Array<Array<{ x: number; y: number }>> {
+    return d
+      .split("M")
+      .filter((part) => part.trim())
+      .map((part) => {
+        // split("M") 会把命令字母吞掉，坐标还在，补回来再解析
+        const toks = ("M" + part).match(/[MLHV]\s*(-?[\d.]+(?:\s+-?[\d.]+)?)/g) ?? [];
+        let px = 0;
+        let py = 0;
+        const pts: Array<{ x: number; y: number }> = [];
+        for (const t of toks) {
+          const cmd = t[0];
+          const nums = t.slice(1).trim().split(/\s+/).map(Number);
+          if (cmd === "M" || cmd === "L") {
+            px = nums[0];
+            py = nums[1];
+          } else if (cmd === "H") {
+            px = nums[0];
+          } else if (cmd === "V") {
+            py = nums[0];
+          }
+          pts.push({ x: px, y: py });
+        }
+        return pts;
+      });
+  }
+
+  /** 两条轴对齐线段的间距（相交为 0） */
+  function axisSegDist(
+    a1: { x: number; y: number },
+    a2: { x: number; y: number },
+    b1: { x: number; y: number },
+    b2: { x: number; y: number }
+  ): number {
+    const aMinX = Math.min(a1.x, a2.x);
+    const aMaxX = Math.max(a1.x, a2.x);
+    const aMinY = Math.min(a1.y, a2.y);
+    const aMaxY = Math.max(a1.y, a2.y);
+    const bMinX = Math.min(b1.x, b2.x);
+    const bMaxX = Math.max(b1.x, b2.x);
+    const bMinY = Math.min(b1.y, b2.y);
+    const bMaxY = Math.max(b1.y, b2.y);
+    const aVert = a1.x === a2.x;
+    const bVert = b1.x === b2.x;
+    if (aVert && !bVert) {
+      if (b1.x >= aMinX && b1.x <= aMaxX && a1.y >= bMinY && a1.y <= bMaxY) return 0;
+    }
+    if (!aVert && bVert) {
+      if (a1.x >= bMinX && a1.x <= bMaxX && b1.y >= aMinY && b1.y <= aMaxY) return 0;
+    }
+    if (aVert && bVert && a1.x === b1.x) {
+      if (aMaxY >= bMinY && bMaxY >= aMinY) return 0;
+    }
+    if (!aVert && !bVert && a1.y === b1.y) {
+      if (aMaxX >= bMinX && bMaxX >= aMinX) return 0;
+    }
+    const ptSeg = (px: number, py: number): number => {
+      const dx = b2.x - b1.x;
+      const dy = b2.y - b1.y;
+      const len2 = dx * dx + dy * dy;
+      let t = len2 === 0 ? 0 : ((px - b1.x) * dx + (py - b1.y) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      return Math.hypot(px - (b1.x + t * dx), py - (b1.y + t * dy));
+    };
+    return Math.min(
+      ptSeg(a1.x, a1.y),
+      ptSeg(a2.x, a2.y),
+      (() => {
+        const dx = a2.x - a1.x;
+        const dy = a2.y - a1.y;
+        const len2 = dx * dx + dy * dy;
+        let t1 = len2 === 0 ? 0 : ((b1.x - a1.x) * dx + (b1.y - a1.y) * dy) / len2;
+        t1 = Math.max(0, Math.min(1, t1));
+        return Math.hypot(b1.x - (a1.x + t1 * dx), b1.y - (a1.y + t1 * dy));
+      })(),
+      (() => {
+        const dx = a2.x - a1.x;
+        const dy = a2.y - a1.y;
+        const len2 = dx * dx + dy * dy;
+        let t2 = len2 === 0 ? 0 : ((b2.x - a1.x) * dx + (b2.y - a1.y) * dy) / len2;
+        t2 = Math.max(0, Math.min(1, t2));
+        return Math.hypot(b2.x - (a1.x + t2 * dx), b2.y - (a1.y + t2 * dy));
+      })()
+    );
+  }
+
   function assertAllRoutesClear(state: FamilyState) {
     const layout = layoutFamilyTree(state);
     expect(layout.nodes.length).toBeGreaterThan(0);
     for (const route of layout.routes) {
       const hidden = samplesInsideAnyCard(route.d, layout.nodes);
       expect(hidden, `${route.id}（${route.kind}）: ${hidden}`).toBe("");
+      // 多段子路径（主干 + 总线）必须相互衔接，否则视觉上断线
+      const subs = subpathPolylines(route.d);
+      for (let i = 1; i < subs.length; i += 1) {
+        let best = Number.POSITIVE_INFINITY;
+        for (let a = 0; a + 1 < subs[i - 1].length; a += 1) {
+          for (let b = 0; b + 1 < subs[i].length; b += 1) {
+            best = Math.min(
+              best,
+              axisSegDist(subs[i - 1][a], subs[i - 1][a + 1], subs[i][b], subs[i][b + 1])
+            );
+          }
+        }
+        expect(
+          best,
+          `${route.id} 的子路径断裂，间距 ${Number.isFinite(best) ? best.toFixed(1) + "px" : "∞"}`
+        ).toBeLessThanOrEqual(0.5);
+      }
     }
   }
 
@@ -507,6 +611,58 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
     // 唯一伴侣对：父母横线不缺席
     const bar = layout.routes.find((r) => r.kind === "spouse");
     expect(bar, "父母横线缺失").toBeTruthy();
+  });
+
+  it("多配偶单元：横线中点偏出孩子一侧时总线延伸到中点，不悬空", () => {
+    // F 两房（M1、M2）+ 一个只录父亲的子女：F+M1 的横线中点
+    // 落在孩子们中心范围之外——总线必须延伸到中点，否则主干悬空断线
+    const persons: Record<string, Person> = {};
+    for (const [id, g, y] of [
+      ["GF", "male", "1940"],
+      ["GM", "female", "1942"],
+      ["F", "male", "1965"],
+      ["M1", "female", "1966"],
+      ["M2", "female", "1970"],
+      ["ME", "male", "1990"],
+      ["SIS", "female", "1993"],
+      ["HALF", "male", "1996"],
+      ["SINGLE", "male", "1998"],
+    ] as const) {
+      persons[id] = person(id, g, y);
+    }
+    const state: FamilyState = {
+      version: 1,
+      persons,
+      parents: {
+        F: { fatherId: "GF", motherId: "GM" },
+        ME: { fatherId: "F", motherId: "M1" },
+        SIS: { fatherId: "F", motherId: "M1" },
+        HALF: { fatherId: "F", motherId: "M2" },
+        SINGLE: { fatherId: "F" },
+      },
+      spouses: [
+        { a: "GF", b: "GM" },
+        { a: "F", b: "M1" },
+        { a: "F", b: "M2" },
+      ],
+      meId: "ME",
+    };
+    assertAllRoutesClear(state);
+    assertEndpointsOnEdges(state);
+
+    const layout = layoutFamilyTree(state);
+    const trunk = layout.routes.find((r) => r.id.startsWith("r:F+M1>bus@"));
+    expect(trunk, "F+M1 缺少主干+总线路由").toBeTruthy();
+    const drops = layout.routes.filter((r) => r.id.startsWith("r:F+M1>drop:"));
+    expect(drops).toHaveLength(2);
+    // 主干落点（横线中点）必须落在总线跨度之内
+    const pts = trunk!.d.match(/-?[\d.]+/g)!.map(Number);
+    const midX = pts[0];
+    const busXs = [pts[3], pts[5]];
+    expect(midX).toBeGreaterThanOrEqual(Math.min(...busXs) - 0.5);
+    expect(midX).toBeLessThanOrEqual(Math.max(...busXs) + 0.5);
+    // 两根垂线共享同一总线高度
+    expect(new Set(drops.map((r) => r.start.y)).size).toBe(1);
   });
 
   it("同一父母行的两对夫妻总线高度错开，不再连成一条", () => {

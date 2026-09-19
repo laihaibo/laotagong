@@ -449,7 +449,7 @@ const TreeScene = memo(function TreeScene({
         <div
           key={"band-" + band.generation}
           className="pointer-events-none absolute left-0 w-full"
-          style={{ top: band.y - 22, height: 22, opacity: 0.7 }}
+          style={{ top: band.y - 30, height: 22, opacity: 0.7 }}
         >
           <div className="flex h-full items-end px-2">
             <span className="rounded-t-md bg-[var(--glass-strong)] px-2 py-0.5 text-[10px] tracking-wide text-[var(--ink-faint)]">
