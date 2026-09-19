@@ -218,7 +218,45 @@ function buildRoutes(
     handledKids.add(childId);
   }
 
-  for (const { f, m, kids } of coupleKids.values()) {
+  // 同一父母行里的多对夫妻共享同一片行间空带：总线高度按对错开
+  // （在空带的 28%–72% 区间均匀分布），否则相邻家庭的横线在同一高度上
+  // 前后相接，看起来连成了一条线。单独一对夫妻保持居中。
+  const laneRatio = new Map<string, number>(); // `${pairKey}@${childRowY}` → 0..1
+  {
+    const lanes = new Map<string, Array<{ tag: string; first: number }>>();
+    for (const [key, grp] of coupleKids) {
+      const gf = byId.get(grp.f)!;
+      const gm = byId.get(grp.m)!;
+      const leftCard = gf.x + gf.width <= gm.x ? gf : gm;
+      const rowsMap = new Map<number, TreeLayoutNode[]>();
+      for (const k of grp.kids) {
+        const list = rowsMap.get(k.n.y) ?? [];
+        list.push(k.n);
+        rowsMap.set(k.n.y, list);
+      }
+      for (const [rowY, rowNodes] of rowsMap) {
+        rowNodes.sort((a, b) => a.x - b.x);
+        const laneKey = leftCard.y + ":" + rowY;
+        const list = lanes.get(laneKey) ?? [];
+        list.push({
+          tag: key + "@" + rowY,
+          first: rowNodes[0].x + rowNodes[0].width / 2,
+        });
+        lanes.set(laneKey, list);
+      }
+    }
+    for (const entries of lanes.values()) {
+      entries.sort((a, b) => a.first - b.first || (a.tag < b.tag ? -1 : 1));
+      entries.forEach((e, i) => {
+        laneRatio.set(
+          e.tag,
+          entries.length === 1 ? 0.5 : 0.28 + (0.44 * i) / (entries.length - 1)
+        );
+      });
+    }
+  }
+
+  for (const [key, { f, m, kids }] of coupleKids) {
     const nf = byId.get(f)!;
     const nm = byId.get(m)!;
     const left = nf.x + nf.width <= nm.x ? nf : nm;
@@ -237,7 +275,8 @@ function buildRoutes(
     }
     for (const [rowY, rowKids] of rows) {
       rowKids.sort((a, b) => a.n.x - b.n.x);
-      const busY = bottom + (rowY - bottom) / 2;
+      const ratio = laneRatio.get(key + "@" + rowY) ?? 0.5;
+      const busY = bottom + (rowY - bottom) * ratio;
       if (rowKids.length === 1) {
         // 独生子女：一根肘线直达顶边中点
         const { id, n } = rowKids[0];

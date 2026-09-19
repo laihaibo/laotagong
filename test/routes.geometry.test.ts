@@ -508,4 +508,58 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
     const bar = layout.routes.find((r) => r.kind === "spouse");
     expect(bar, "父母横线缺失").toBeTruthy();
   });
+
+  it("同一父母行的两对夫妻总线高度错开，不再连成一条", () => {
+    // 父辈行有两对夫妻：父母（我+妹妹的双亲）与伯伯夫妇（堂兄的双亲），
+    // 两家的子女都在同一条子辈行——两条总线同高就会前后相连。
+    const persons: Record<string, Person> = {};
+    for (const [id, g, y] of [
+      ["GF", "male", "1940"],
+      ["GM", "female", "1942"],
+      ["F", "male", "1965"],
+      ["M", "female", "1968"],
+      ["UNCLE", "male", "1962"],
+      ["UW", "female", "1964"],
+      ["ME", "male", "1990"],
+      ["SIS", "female", "1993"],
+      ["COUSIN", "male", "1992"],
+      ["COUSIN2", "male", "1995"],
+    ] as const) {
+      persons[id] = person(id, g, y);
+    }
+    const state: FamilyState = {
+      version: 1,
+      persons,
+      parents: {
+        F: { fatherId: "GF", motherId: "GM" },
+        UNCLE: { fatherId: "GF", motherId: "GM" },
+        ME: { fatherId: "F", motherId: "M" },
+        SIS: { fatherId: "F", motherId: "M" },
+        COUSIN: { fatherId: "UNCLE", motherId: "UW" },
+        COUSIN2: { fatherId: "UNCLE", motherId: "UW" },
+      },
+      spouses: [
+        { a: "GF", b: "GM" },
+        { a: "F", b: "M" },
+        { a: "UNCLE", b: "UW" },
+      ],
+      meId: "ME",
+    };
+    assertAllRoutesClear(state);
+
+    const layout = layoutFamilyTree(state);
+    const buses = layout.routes.filter(
+      (r) => r.id.includes(">bus@") && (r.fromId === "F" || r.fromId === "UNCLE")
+    );
+    expect(buses, "父辈行两对夫妻应各有一条主干+总线路由").toHaveLength(2);
+    const busYs = new Set(buses.map((r) => r.end.y));
+    expect(busYs.size, "两条总线高度相同，仍会连成一条").toBe(2);
+    // 两条总线都落在行间空带里（父母下沿与子女顶边之间）
+    for (const r of buses) {
+      const from = layout.byId.get(r.fromId)!;
+      const to = layout.byId.get(r.toId)!;
+      expect(r.end.y).toBeGreaterThan(from.y + from.height);
+      expect(r.end.y).toBeLessThan(to.y);
+    }
+  });
 });
