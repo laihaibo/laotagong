@@ -328,7 +328,8 @@ function backfillChildrenOf(state: FamilyState, parentIds: string[]): FamilyStat
 }
 
 /**
- * 为子女挂上双亲：本人按性别挂一边，若本人恰好有一位配偶则自动挂另一边。
+ * 为子女挂上双亲：本人按性别挂一边；若本人恰有一位配偶、或（没有婚姻边时）
+ * 恰有一位共同养育者，则自动补另一边——子女与兄姐才能同挂在父母横线下。
  */
 export function linkChildWithParents(
   state: FamilyState,
@@ -351,20 +352,22 @@ export function linkChildWithParents(
 
   let next = addParentLink(state, childId, parentId, primaryRole);
 
-  // 仅当本人恰有一位配偶时才自动补另一端——唯一候选才算证据。
-  // 0 位：无从补起；≥2 位：不猜，留给多配偶 picker（AC-20）。
+  // 自动补另一端的唯一候选证据，按强度两级：
+  // 1) 恰有 1 位配偶；2) 无配偶边（「添加父亲/母亲」不建婚姻）但现有子女
+  //    恰好只有一位另一位亲长。0/≥2 位候选：不猜，留给用户逐条指定。
+  const otherRole: "father" | "mother" =
+    primaryRole === "father" ? "mother" : "father";
   const spouseIds = getSpouseIds(state, parentId);
-  if (spouseIds.length === 1) {
-    const spouseId = spouseIds[0];
-    const spouse = next.persons[spouseId];
-    if (spouse) {
-      const otherRole: "father" | "mother" =
-        primaryRole === "father" ? "mother" : "father";
+  const coParentIds = spouseIds.length === 0 ? getCoParentIds(state, parentId) : [];
+  const candidates = spouseIds.length === 1 ? spouseIds : coParentIds;
+  if (candidates.length === 1) {
+    const otherId = candidates[0];
+    if (next.persons[otherId]) {
       const existing = next.parents[childId];
       const already =
         otherRole === "father" ? existing?.fatherId : existing?.motherId;
       if (!already) {
-        next = addParentLink(next, childId, spouseId, otherRole);
+        next = addParentLink(next, childId, otherId, otherRole);
       }
     }
   }

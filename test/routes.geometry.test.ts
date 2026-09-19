@@ -232,8 +232,20 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
         Math.abs(route.start.x - route.end.x) < 0.5 &&
         route.start.y <= route.end.y &&
         !insideAnyCard(route.start);
+      // 主干（多子女总线）起点悬在夫妻横线中点：不在任何卡内、
+      // 且落在 from/to 两张卡的联合跨度内
+      const startOnTrunk =
+        route.kind === "blood" &&
+        !insideAnyCard(route.start) &&
+        route.start.x >= Math.min(from.x, to.x) - 2 &&
+        route.start.x <= Math.max(from.x + from.width, to.x + to.width) + 2 &&
+        route.start.y >= Math.min(from.y, to.y) - 2 &&
+        route.start.y <= Math.max(from.y + from.height, to.y + to.height) + 2;
       const startOk =
-        onEdge(route.start, from) || startOnMarriageBar || startIsDrop;
+        onEdge(route.start, from) ||
+        startOnMarriageBar ||
+        startIsDrop ||
+        startOnTrunk;
       expect(startOk, `${route.id} 起点悬空`).toBe(true);
       // 总线路由的终点悬在末位子女上方（其 x 即该子女顶边中点）
       const endIsBus =
@@ -460,5 +472,40 @@ describe("连线不得穿过任何卡片（逐点采样）", () => {
       expect(d.end.x).toBeCloseTo(to.x + to.width / 2, 0);
       expect(d.end.y).toBeCloseTo(to.y, 0);
     }
+  });
+
+  it("只录了一位亲长的子女并入唯一伴侣的共享总线", () => {
+    // 旧数据/漏录：S1 双亲齐全，S2 只录了父亲——S2 也应从父母横线的总线分叉
+    const persons: Record<string, Person> = {};
+    for (const [id, g, y] of [
+      ["ME", "male", "1990"],
+      ["WIFE", "female", "1992"],
+      ["S1", "male", "2015"],
+      ["S2", "male", "2018"],
+    ] as const) {
+      persons[id] = person(id, g, y);
+    }
+    const state: FamilyState = {
+      version: 1,
+      persons,
+      parents: {
+        S1: { fatherId: "ME", motherId: "WIFE" },
+        S2: { fatherId: "ME" },
+      },
+      spouses: [],
+      meId: "ME",
+    };
+    assertAllRoutesClear(state);
+    assertEndpointsOnEdges(state);
+
+    const layout = layoutFamilyTree(state);
+    const drop1 = layout.routes.find((r) => r.id === "r:ME+WIFE>drop:S1");
+    const drop2 = layout.routes.find((r) => r.id === "r:ME+WIFE>drop:S2");
+    expect(drop1, "S1 缺少总线垂线").toBeTruthy();
+    expect(drop2, "S2 未并入共享总线（应从总线分叉）").toBeTruthy();
+    expect(drop1!.start.y).toBe(drop2!.start.y);
+    // 唯一伴侣对：父母横线不缺席
+    const bar = layout.routes.find((r) => r.kind === "spouse");
+    expect(bar, "父母横线缺失").toBeTruthy();
   });
 });

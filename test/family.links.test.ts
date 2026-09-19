@@ -485,3 +485,41 @@ describe("共同养育推导 · 先加父亲再加母亲也必须看到彼此", 
     expect(getPartnerIds(state, "F")).toEqual([]);
   });
 });
+
+describe("共同养育家庭添加子女 · 唯一共同养育者自动补链", () => {
+  it("无婚姻边时，新子女自动挂上唯一共同养育者", () => {
+    let state = seed([
+      ["F", "male"],
+      ["M", "female"],
+      ["C1", "male"],
+      ["C2", "male"],
+    ]);
+    // C1 双亲齐全 → F 与 M 成为共同养育者（「添加父亲/母亲」不建婚姻边）
+    state = linkChildWithParents(state, "C1", "F");
+    state = addParentLink(state, "C1", "M", "mother");
+    expect(getSpouseIds(state, "F")).toHaveLength(0);
+
+    // 给 F 再添 C2：唯一共同养育者 M 自动补进母亲槽
+    state = linkChildWithParents(state, "C2", "F");
+    expect(getFatherId(state, "C2")).toBe("F");
+    expect(getMotherId(state, "C2")).toBe("M");
+  });
+
+  it("有两位共同养育者时不猜，新子女只挂单亲", () => {
+    let state = seed([
+      ["F", "male"],
+      ["M", "female"],
+      ["W", "female"],
+      ["C1", "male"],
+      ["C2", "male"],
+      ["C3", "male"],
+    ]);
+    state = linkChildWithParents(state, "C1", "F");
+    state = addParentLink(state, "C1", "M", "mother");
+    state = linkChildWithParents(state, "C2", "F");
+    state = addParentLink(state, "C2", "W", "mother");
+    state = linkChildWithParents(state, "C3", "F");
+    expect(getFatherId(state, "C3")).toBe("F");
+    expect(getMotherId(state, "C3")).toBeNull();
+  });
+});

@@ -1,7 +1,9 @@
 import {
   type FamilyState,
   getChildrenIds,
+  getCoParentIds,
   getRelationDistances,
+  getSpouseIds,
 } from "./family";
 import {
   type LineageFilter,
@@ -167,16 +169,36 @@ function buildRoutes(
 
   const pairKey = (x: string, y: string) => (x < y ? x + "|" + y : y + "|" + x);
 
+  /** X 的唯一伴侣：配偶 ∪ 共同养育者恰有一位时返回该人，否则 null */
+  const uniquePartnerOf = (id: string): string | null => {
+    const partners = new Set<string>(getSpouseIds(state, id));
+    for (const p of getCoParentIds(state, id)) partners.add(p);
+    if (partners.size !== 1) return null;
+    return [...partners][0];
+  };
+
   // ── 经典族谱画法：夫妻横线相连，从横线中点垂落，多子女共享一条总线 ──
   // 双亲（已婚或共同养育，buildUnits 已把他们并格相邻）且都在子女上方才适用。
+  // 只关联了一位亲长的子女：若该亲长恰有一位伴侣，同样并入这对伴侣的总线
+  // （仅展示推断，不改数据——旧数据/漏录的子女也能与兄姐同线）。
   const handledKids = new Set<string>();
   const coupleKids = new Map<
     string,
     { f: string; m: string; kids: Array<{ id: string; n: TreeLayoutNode }> }
   >();
   for (const [childId, entry] of Object.entries(state.parents)) {
-    const f = entry.fatherId;
-    const m = entry.motherId;
+    let f = entry.fatherId;
+    let m = entry.motherId;
+    if (Boolean(f) !== Boolean(m)) {
+      const only = (f ?? m) as string;
+      if (byId.has(only)) {
+        const partner = uniquePartnerOf(only);
+        if (partner && byId.has(partner)) {
+          if (!f) f = partner;
+          else m = partner;
+        }
+      }
+    }
     if (!f || !m || !byId.has(f) || !byId.has(m)) continue;
     const child = byId.get(childId);
     if (!child) continue;
@@ -385,6 +407,15 @@ function buildRoutes(
     if (seenPair.has(key)) continue;
     seenPair.add(key);
     connectorPairs.push([f, m]);
+  }
+  // 唯一伴侣对：哪怕所有子女都只录了一位亲长，父母横线也不能缺席
+  for (const id of byId.keys()) {
+    const partner = uniquePartnerOf(id);
+    if (!partner || !byId.has(partner)) continue;
+    const key = pairKey(id, partner);
+    if (seenPair.has(key)) continue;
+    seenPair.add(key);
+    connectorPairs.push([id, partner]);
   }
   for (const [a, b] of connectorPairs) {
     const na = byId.get(a);
