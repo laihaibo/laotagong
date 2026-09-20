@@ -14,6 +14,7 @@ import {
   Moon,
   Plus,
   Search,
+  Settings2,
   Sun,
   Trash2,
   Upload,
@@ -23,6 +24,12 @@ import {
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { FamilyTree } from "@/components/family-tree";
+import {
+  LAYOUT_MODE_META,
+  type LayoutMode,
+  loadLayoutMode,
+  saveLayoutMode,
+} from "@/lib/layout-mode";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -164,6 +171,8 @@ export function FamilyApp() {
   const [ambiguousOpen, setAmbiguousOpen] = useState(false);
   /** 节点上的「增加关系」按钮：先选关系种类，再开新建表单 */
   const [relationPickerFor, setRelationPickerFor] = useState<string | null>(null);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("custom");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -182,6 +191,7 @@ export function FamilyApp() {
     const mode = loadThemeMode();
     setThemeMode(mode);
     applyTheme(resolveTheme(mode));
+    setLayoutMode(loadLayoutMode());
     setHydrated(true);
 
     if (repairable.length > 0) {
@@ -202,6 +212,11 @@ export function FamilyApp() {
     const t = setTimeout(() => setToast(null), 2200);
     return () => clearTimeout(t);
   }, [toast]);
+
+  const changeLayoutMode = useCallback((mode: LayoutMode) => {
+    setLayoutMode(mode);
+    saveLayoutMode(mode);
+  }, []);
 
   const changeTheme = useCallback((mode: ThemeMode) => {
     setThemeMode(mode);
@@ -378,6 +393,15 @@ export function FamilyApp() {
             >
               <Database className="h-4 w-4" />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-header-item
+              onClick={() => setSettingsOpen(true)}
+              title="设置"
+            >
+              <Settings2 className="h-4 w-4" />
+            </Button>
             <ThemeCycleButton mode={themeMode} onChange={changeTheme} />
           </div>
         </div>
@@ -420,6 +444,7 @@ export function FamilyApp() {
           <FamilyTree
             state={state}
             focusId={focus}
+            layoutMode={layoutMode}
             onOpenPerson={(id) => setEditingId(id)}
             onAddRelation={(id) => setRelationPickerFor(id)}
             onSetMe={(id) => setAsMe(id)}
@@ -448,6 +473,39 @@ export function FamilyApp() {
               setSearchOpen(false);
             }}
           />
+        </SheetContent>
+      </Sheet>
+
+      
+      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <SheetContent side="bottom">
+          <SheetHeader>
+            <SheetTitle>设置</SheetTitle>
+            <SheetDescription>布局引擎等显示偏好</SheetDescription>
+          </SheetHeader>
+          <div className="space-y-3 pb-4">
+            <Label>布局引擎</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {(Object.keys(LAYOUT_MODE_META) as LayoutMode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => changeLayoutMode(m)}
+                  className={cn(
+                    "rounded-2xl border px-3 py-3 text-left text-sm transition-all",
+                    layoutMode === m
+                      ? "glass-btn text-[var(--ink)]"
+                      : "border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
+                  )}
+                >
+                  <div className="font-medium">{LAYOUT_MODE_META[m].label}</div>
+                  <div className="mt-1 text-caption text-[var(--ink-faint)]">
+                    {LAYOUT_MODE_META[m].hint}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         </SheetContent>
       </Sheet>
 

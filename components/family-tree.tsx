@@ -29,6 +29,8 @@ import {
 } from "@/lib/lineage";
 import { buildKinshipMap } from "@/lib/kinship";
 import { type TreeLayout, layoutFamilyTree } from "@/lib/tree";
+import { TreeG6 } from "@/components/tree-g6";
+import { type LayoutMode } from "@/lib/layout-mode";
 import { cn } from "@/lib/utils";
 
 const MIN_SCALE = 0.18;
@@ -61,12 +63,14 @@ export function FamilyTree({
   onOpenPerson,
   onAddRelation,
   onSetMe,
+  layoutMode = "custom",
 }: {
   state: FamilyState;
   focusId: string | null;
   onOpenPerson: (id: string) => void;
   onAddRelation: (id: string) => void;
   onSetMe: (id: string) => void;
+  layoutMode?: LayoutMode;
 }) {
   const [filter, setFilter] = useState<LineageFilter>("all");
   const [maxDepth, setMaxDepth] = useState(6);
@@ -264,6 +268,11 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
         >
           小地图
         </button>
+        <div data-layout-mode-chips className="ml-1 inline-flex items-center gap-1 rounded-full border border-[var(--glass-border)] px-2 py-0.5 text-[10px] text-[var(--ink-faint)]">
+          <span>布局</span>
+          <span className={cn("rounded-full px-1.5 py-0.5", layoutMode === "custom" ? "glass-btn text-[var(--ink)]" : "")}>自研</span>
+          <span className={cn("rounded-full px-1.5 py-0.5", layoutMode === "g6" ? "glass-btn text-[var(--ink)]" : "")}>G6</span>
+        </div>
         <div className="ml-auto flex items-center gap-2 text-[10px] text-[var(--ink-faint)]">
           <LegendDot color="var(--line-paternal)" label="父系" />
           <LegendDot color="var(--line-maternal)" label="母系" />
@@ -272,6 +281,15 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
         </div>
       </div>
 
+      {layoutMode === "g6" ? (
+        <TreeG6
+          state={state}
+          focusId={focusId}
+          filter={filter}
+          maxDepth={maxDepth}
+          onOpenPerson={onOpenPerson}
+        />
+      ) : (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-[var(--glass-edge)] bg-[var(--glass)]/40">
         <div
           ref={containerRef}
@@ -350,6 +368,7 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }

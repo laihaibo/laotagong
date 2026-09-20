@@ -146,6 +146,120 @@ function restrictState(state: FamilyState, visible: Set<string>): FamilyState {
  * 两端必须落在对应卡片的边缘上，且中途不得穿过任何卡片——
  * 被卡片盖住的那一段在视觉上就是「断线」。
  */
+
+/** ????????????????????????/??? */
+function clusterRankOf(
+  state: FamilyState,
+  unitMembers: string[],
+  meId: string | null,
+  distances: Map<string, number | null>
+): number {
+  if (!meId || !state.persons[meId]) return 4;
+  const mySpouses = new Set(
+    state.spouses
+      .filter((s) => s.a === meId || s.b === meId)
+      .map((s) => (s.a === meId ? s.b : s.a))
+  );
+
+  const shareParents = (a: string, b: string) => {
+    const pa = state.parents[a];
+    const pb = state.parents[b];
+    if (!pa || !pb) return false;
+    return Boolean(
+      (pa.fatherId && pa.fatherId === pb.fatherId) ||
+        (pa.motherId && pa.motherId === pb.motherId)
+    );
+  };
+
+  /** 是否「我」的后代（沿 parents 上溯能碰到 meId） */
+  const isMeDescendant = (id: string): boolean => {
+    if (id === meId) return false;
+    const stack = [id];
+    const seen = new Set<string>();
+    while (stack.length > 0) {
+      const cur = stack.pop() as string;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      const p = state.parents[cur];
+      if (!p) continue;
+      if (p.fatherId === meId || p.motherId === meId) return true;
+      if (p.fatherId) stack.push(p.fatherId);
+      if (p.motherId) stack.push(p.motherId);
+    }
+    return false;
+  };
+
+  const isSpouseOf = (id: string, personId: string) =>
+    state.spouses.some(
+      (s) => (s.a === id && s.b === personId) || (s.b === id && s.a === personId)
+    );
+
+  const myP = state.parents[meId];
+  const myParentIds = [myP?.fatherId, myP?.motherId].filter(Boolean) as string[];
+
+  const rankPerson = (id: string, depth = 0): number => {
+    if (depth > 12) return 4;
+    if (id === meId || mySpouses.has(id)) return 0;
+    if (isMeDescendant(id)) return 0;
+    // 我子女的配偶
+    const parents = state.parents[id];
+    if (parents) {
+      if (
+        (parents.fatherId === meId || parents.motherId === meId) &&
+        state.spouses.some((s) => (s.a === id && isMeDescendant(s.b)) || (s.b === id && isMeDescendant(s.a)))
+      ) {
+        return 0;
+      }
+      // 与我后代结婚
+      if (
+        state.spouses.some((s) => {
+          if (s.a !== id && s.b !== id) return false;
+          const other = s.a === id ? s.b : s.a;
+          return isMeDescendant(other) || other === meId || mySpouses.has(other);
+        })
+      ) {
+        return 0;
+      }
+    }
+    if (shareParents(meId, id)) return 1;
+    // 我同胞的配偶
+    if (isMeDescendant(id) === false) {
+      for (const s of state.spouses) {
+        const other = s.a === id ? s.b : s.b === id ? s.a : null;
+        if (other && shareParents(meId, other) && isSpouseOf(id, other)) return 1;
+      }
+    }
+    // 父母的同胞
+    for (const pid of myParentIds) {
+      if (shareParents(pid, id)) return 2;
+    }
+    // 配偶的同胞（妻兄弟姐妹等）
+    for (const spId of mySpouses) {
+      if (shareParents(spId, id)) return 3;
+    }
+    // 姻亲旁系的后代：父母任一方 rank>=3 则本人也是 3
+    if (parents) {
+      const pr = [parents.fatherId, parents.motherId]
+        .filter((x): x is string => Boolean(x))
+        .map((x) => rankPerson(x, depth + 1));
+      if (pr.some((r) => r >= 3)) return 3;
+      if (pr.some((r) => r === 2)) return 2;
+      if (pr.some((r) => r === 1)) {
+        // 父母同胞的子女：堂表，仍算偏旁系
+        return 2;
+      }
+    }
+    void distances;
+    return 4;
+  };
+
+  let best = 4;
+  for (const id of unitMembers) {
+    best = Math.min(best, rankPerson(id));
+  }
+  return best;
+}
+
 function buildRoutes(
   state: FamilyState,
   byId: Map<string, TreeLayoutNode>,
@@ -561,7 +675,11 @@ export function layoutFamilyTree(
     });
   }
 
-    const unitPedigreeKey = (unit: string): string => {
+    const unitClusterOf = (unit: string): number => {
+    return clusterRankOf(working, membersOf.get(unit) ?? [], meId, distances as Map<string, number | null>);
+  };
+
+  const unitPedigreeKey = (unit: string): string => {
     const members = membersOf.get(unit) ?? [];
     let best = "9";
     for (const id of members) {
@@ -703,24 +821,36 @@ export function layoutFamilyTree(
   const sweepRow = (units: string[]): Map<string, number> => {
     const placed = new Map<string, number>();
     const sorted = [...units].sort((a, b) => {
+      const ca = unitClusterOf(a);
+      const cb = unitClusterOf(b);
+      // ????????????0??????????3???
+      if (ca !== cb) return ca - cb;
       const ka = unitPedigreeKey(a);
       const kb = unitPedigreeKey(b);
-      const ca = idealCenterOf.get(a) ?? 0;
-      const cb = idealCenterOf.get(b) ?? 0;
-      // 祖先行族谱序优先：父系靠左、母系靠右（理想中心会把两侧拉平）
       const kaAnc = ka !== "9";
       const kbAnc = kb !== "9";
       if (kaAnc && kbAnc && ka !== kb) return ka.localeCompare(kb);
-      if (Math.abs(ca - cb) > 1) return ca - cb;
+      const ia = idealCenterOf.get(a) ?? 0;
+      const ib = idealCenterOf.get(b) ?? 0;
+      if (Math.abs(ia - ib) > 1) return ia - ib;
       return ka.localeCompare(kb);
     });
     let rightEdge = Number.NEGATIVE_INFINITY;
+    let prevRank = -1;
     for (const unit of sorted) {
+      const rank = unitClusterOf(unit);
       const half = widthOf(unit) / 2;
       const ideal = idealCenterOf.get(unit) ?? 0;
-      const center = Math.max(ideal, rightEdge + H_GAP + half);
+      // ?????????????????????????
+      let gap = H_GAP;
+      if (prevRank >= 0 && rank !== prevRank) {
+        const delta = Math.abs(rank - prevRank);
+        gap = delta >= 3 ? H_GAP * 3 : delta === 2 ? H_GAP * 2 : H_GAP * 1.5;
+      }
+      const center = Math.max(ideal, rightEdge + gap + half);
       placed.set(unit, center);
       rightEdge = center + half;
+      prevRank = rank;
     }
     return placed;
   };
