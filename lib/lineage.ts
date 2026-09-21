@@ -146,16 +146,6 @@ export function computeDistances(state: FamilyState): Map<string, number | null>
   return distances;
 }
 
-function sharesParentWith(state: FamilyState, personId: string, ancestorId: string): boolean {
-  const ap = state.parents[ancestorId];
-  const pp = state.parents[personId];
-  if (!ap || !pp) return false;
-  return Boolean(
-    (ap.fatherId && ap.fatherId === pp.fatherId) ||
-      (ap.motherId && ap.motherId === pp.motherId)
-  );
-}
-
 export function classifyLineage(
   state: FamilyState,
   personId: string,
@@ -171,17 +161,8 @@ export function classifyLineage(
 
   const dist = distances || computeDistances(state);
   const d = dist.get(personId);
-  const meP = state.parents[meId];
-  if (d === null || d === undefined) {
-    if (
-      meP &&
-      ((meP.fatherId && sharesParentWith(state, personId, meP.fatherId)) ||
-        (meP.motherId && sharesParentWith(state, personId, meP.motherId)))
-    ) {
-      return "collateral";
-    }
-    return "orphan";
-  }
+  // 与「我」不连通的人不可能有共同祖先（纯血亲边都是混合图的边）
+  if (d === null || d === undefined) return "orphan";
   if (d >= 1 && isBloodDescendant(state, personId, meId)) return "descendant";
   const my = state.parents[meId];
   const theirs = state.parents[personId];
@@ -191,14 +172,42 @@ export function classifyLineage(
     if (shareFather || shareMother) return "sibling";
   }
   if (getSpouseIds(state, meId).includes(personId)) return "affinal";
-  if (
-    meP &&
-    ((meP.fatherId && sharesParentWith(state, personId, meP.fatherId)) ||
-      (meP.motherId && sharesParentWith(state, personId, meP.motherId)))
-  ) {
-    return "collateral";
-  }
+  // 旁系：与我有共同祖先的其余血亲——伯叔姑舅姨、堂表兄弟、侄甥、
+  // 伯公祖与远房等都算。只认「与父母共父母」一级会让堂表亲掉进
+  // orphan，画布上既没有亲系色、布局排序也被甩到最右边。
+  if (sharesCommonAncestor(state, personId, meId)) return "collateral";
   return "orphan";
+}
+
+/** 双方沿 parents 上溯的祖先集合（含本人）是否有交集 */
+export function sharesCommonAncestor(
+  state: FamilyState,
+  personId: string,
+  meId: string | null
+): boolean {
+  if (!meId || !state.persons[meId] || !state.persons[personId]) return false;
+  const mine = ancestorSetWithSelf(state, meId);
+  const theirs = ancestorSetWithSelf(state, personId);
+  for (const id of theirs) {
+    if (mine.has(id)) return true;
+  }
+  return false;
+}
+
+function ancestorSetWithSelf(state: FamilyState, id: string): Set<string> {
+  const seen = new Set<string>([id]);
+  const stack = [id];
+  while (stack.length > 0) {
+    const cur = stack.pop() as string;
+    const p = state.parents[cur];
+    for (const up of [p?.fatherId, p?.motherId]) {
+      if (up && state.persons[up] && !seen.has(up)) {
+        seen.add(up);
+        stack.push(up);
+      }
+    }
+  }
+  return seen;
 }
 
 export function collateralSide(
@@ -209,11 +218,18 @@ export function collateralSide(
   if (!meId) return "other";
   const meParents = state.parents[meId];
   if (!meParents) return "other";
-  if (meParents.fatherId && sharesParentWith(state, personId, meParents.fatherId)) {
-    return "paternal";
+  // 先看共同祖先落在父系链还是母系链：姑姑的孩子（共同祖先=爷爷）
+  // 算父系，姨妈的孩子（共同祖先=外公）算母系。一级旁系的老判定自然被覆盖。
+  const theirs = ancestorSetWithSelf(state, personId);
+  if (meParents.fatherId) {
+    for (const id of ancestorSetWithSelf(state, meParents.fatherId)) {
+      if (theirs.has(id)) return "paternal";
+    }
   }
-  if (meParents.motherId && sharesParentWith(state, personId, meParents.motherId)) {
-    return "maternal";
+  if (meParents.motherId) {
+    for (const id of ancestorSetWithSelf(state, meParents.motherId)) {
+      if (theirs.has(id)) return "maternal";
+    }
   }
   return "other";
 }

@@ -69,9 +69,9 @@ const LINEAGE_STROKE: Record<LineageKind, string> = {
   paternal: "var(--line-paternal)",
   maternal: "var(--line-maternal)",
   descendant: "var(--line-descendant)",
-  sibling: "var(--line-other)",
+  sibling: "var(--line-collateral)",
   affinal: "var(--line-spouse)",
-  collateral: "var(--line-other)",
+  collateral: "var(--line-collateral)",
   orphan: "var(--line-other)",
 };
 
@@ -538,6 +538,7 @@ export function FamilyTree({
           <LegendDot color="var(--line-maternal)" label="母系" />
           <LegendDot color="var(--line-spouse)" label="姻亲" />
           <LegendDot color="var(--line-descendant)" label="后裔" />
+          <LegendDot color="var(--line-collateral)" label="旁系" />
         </div>
       </div>
 

@@ -444,6 +444,7 @@ select option {
   --line-spouse: #d97706;
   --line-descendant: #059669;
   --line-ego: #2563eb;
+  --line-collateral: #6d28d9;
   --line-other: rgba(15, 23, 42, 0.22);
 }
 .dark {
@@ -452,5 +453,6 @@ select option {
   --line-spouse: #fbbf24;
   --line-descendant: #34d399;
   --line-ego: #60a5fa;
+  --line-collateral: #a78bfa;
   --line-other: rgba(241, 245, 249, 0.22);
 }

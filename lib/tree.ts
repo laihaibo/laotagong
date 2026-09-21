@@ -151,7 +151,11 @@ function restrictState(state: FamilyState, visible: Set<string>): FamilyState {
  * 被卡片盖住的那一段在视觉上就是「断线」。
  */
 
-/** ????????????????????????/??? */
+/**
+ * 同一单元的「簇序」：0=直系核心（我/配偶/后代），1=同胞，2=伯叔姑舅姨与
+ * 堂表亲，3=配偶的同胞及其后代，4=其余。只用于行内分组间距，不再决定先后——
+ * 先后由子树顺序（idealCenter）决定，否则家庭分支会被按亲疏拆散。
+ */
 function clusterRankOf(
   state: FamilyState,
   unitMembers: string[],
@@ -368,6 +372,12 @@ function buildRoutes(
     const midY = left.y + left.height / 2;
     const bottom = left.y + left.height;
     const lineage = lineageOf.get(f) ?? lineageOf.get(m) ?? "orphan";
+    // 直系后代的连线用「后裔」色（图例的绿色要真的出现在 我→子女 上）；
+    // 其余跟随家长侧（父系蓝/母系品红/旁系紫）。
+    const childRouteLineage = (id: string): LineageKind => {
+      const cl = lineageOf.get(id) ?? "orphan";
+      return cl === "descendant" ? "descendant" : lineage;
+    };
 
     // 子女按所在行分组（正常都在同一行；跨行是畸形数据，各行各画总线）
     const rows = new Map<number, Array<{ id: string; n: TreeLayoutNode }>>();
@@ -393,7 +403,7 @@ function buildRoutes(
           fromId: f,
           toId: id,
           kind: "blood",
-          lineage,
+          lineage: childRouteLineage(id),
           d,
           start: { x: midX, y: midY },
           end: { x: cx, y: n.y },
@@ -422,7 +432,7 @@ function buildRoutes(
         fromId: f,
         toId: far.id,
         kind: "blood",
-        lineage,
+        lineage: childRouteLineage(far.id),
         d:
           "M " + midX + " " + midY +
           " V " + busY +
@@ -438,7 +448,7 @@ function buildRoutes(
           fromId: f,
           toId: id,
           kind: "blood",
-          lineage,
+          lineage: childRouteLineage(id),
           d: "M " + cx + " " + busY + " V " + n.y,
           start: { x: cx, y: busY },
           end: { x: cx, y: n.y },
@@ -533,7 +543,14 @@ function buildRoutes(
         fromId: pid,
         toId: childId,
         kind: "blood",
-        lineage: pl === "orphan" ? lineageOf.get(childId) ?? "orphan" : pl,
+        // 直系后代用「后裔」色：图例承诺的绿色要真的出现在「我→子女」上；
+        // 其余血亲线仍跟随家长侧（父系蓝/母系品红/旁系紫），姻亲橙归配偶线。
+        lineage:
+          (lineageOf.get(childId) ?? "orphan") === "descendant"
+            ? "descendant"
+            : pl === "orphan"
+              ? lineageOf.get(childId) ?? "orphan"
+              : pl,
         d,
         start,
         end: { x: cx, y: ey },
@@ -819,20 +836,17 @@ export function layoutFamilyTree(
 
   const sweepRow = (units: string[]): Map<string, number> => {
     const placed = new Map<string, number>();
+    // 行内先后以 idealCenter（子树 DFS 槽位）为主：同一家庭分支在每一代都
+    // 连成一片，堂表亲贴着自己的父母，不会横跨直系与姻亲区被甩到行尾。
+    // 早年按 clusterRank（与「我」的亲疏）排先后，正是堂亲脱节的根因。
     const sorted = [...units].sort((a, b) => {
-      const ca = unitClusterOf(a);
-      const cb = unitClusterOf(b);
-      // ????????????0??????????3???
-      if (ca !== cb) return ca - cb;
-      const ka = unitPedigreeKey(a);
-      const kb = unitPedigreeKey(b);
-      const kaAnc = ka !== "9";
-      const kbAnc = kb !== "9";
-      if (kaAnc && kbAnc && ka !== kb) return ka.localeCompare(kb);
       const ia = idealCenterOf.get(a) ?? 0;
       const ib = idealCenterOf.get(b) ?? 0;
       if (Math.abs(ia - ib) > 1) return ia - ib;
-      return ka.localeCompare(kb);
+      const ka = unitPedigreeKey(a);
+      const kb = unitPedigreeKey(b);
+      if (ka !== kb) return ka.localeCompare(kb);
+      return ia - ib;
     });
     let rightEdge = Number.NEGATIVE_INFINITY;
     let prevRank = -1;
@@ -840,7 +854,7 @@ export function layoutFamilyTree(
       const rank = unitClusterOf(unit);
       const half = widthOf(unit) / 2;
       const ideal = idealCenterOf.get(unit) ?? 0;
-      // ?????????????????????????
+      // 亲疏分区之间留出更大的空隙：直系核心、旁系、姻亲在视觉上分块
       let gap = H_GAP;
       if (prevRank >= 0 && rank !== prevRank) {
         const delta = Math.abs(rank - prevRank);
