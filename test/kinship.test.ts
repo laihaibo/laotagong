@@ -183,6 +183,53 @@ describe("核心称谓（三门）", () => {
     expect(kinshipTerm(next, "WMOTHER", "WIFE")).toBe("妈妈");
   });
 
+  it("配偶的兄弟姐妹的配偶：连襟与妯娌", () => {
+    const persons: Record<string, Person> = {};
+    for (const [id, g, y] of [
+      ["ME", "male", "1990"],
+      ["WIFE", "female", "1992"],
+      ["WF", "male", "1960"],
+      ["WM", "female", "1962"],
+      ["WSIS", "female", "1990"],
+      ["WSISH", "male", "1988"],
+      ["HUB", "male", "1991"],
+      ["HF", "male", "1961"],
+      ["HM", "female", "1963"],
+      ["HBRO", "male", "1989"],
+      ["HW", "female", "1993"],
+      ["HBROW", "female", "1992"],
+    ] as const) {
+      persons[id] = person(id, g, y);
+    }
+    const base: FamilyState = {
+      version: 1,
+      persons,
+      parents: {
+        WIFE: { fatherId: "WF", motherId: "WM" },
+        WSIS: { fatherId: "WF", motherId: "WM" },
+        HUB: { fatherId: "HF", motherId: "HM" },
+        HBRO: { fatherId: "HF", motherId: "HM" },
+      },
+      spouses: [
+        { a: "ME", b: "WIFE" },
+        { a: "WSIS", b: "WSISH" },
+        { a: "HUB", b: "HW" },
+        { a: "HBRO", b: "HBROW" },
+      ],
+      meId: "ME",
+    };
+
+    // 妻子的姐姐的丈夫 = 连襟（此前被兜底标成「同辈」）
+    expect(kinshipTerm(base, "WSISH", "ME")).toBe("连襟");
+    // 对称：连襟看我也是连襟
+    expect(kinshipTerm({ ...base, meId: "WSISH" }, "ME", "WSISH")).toBe("连襟");
+
+    // 丈夫的弟弟的妻子 = 妯娌（以丈夫之妻为原点）
+    const fromWife = { ...base, meId: "HW" };
+    expect(kinshipTerm(fromWife, "HBROW", "HW")).toBe("妯娌");
+    expect(kinshipTerm({ ...base, meId: "HBROW" }, "HW", "HBROW")).toBe("妯娌");
+  });
+
   it("buildKinshipMap 覆盖全员", () => {
     const map = buildKinshipMap(state, "ME");
     expect(map.get("WMOTHER")).toBe("岳母");

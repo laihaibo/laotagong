@@ -37,13 +37,19 @@ app/
   page.tsx         仅渲染 <FamilyApp />
 components/
   family-app.tsx   应用外壳 + 各种弹窗（待继续拆分）
-  family-tree.tsx  家族树画布：可缩放 / 可拖拽 / 回到「我」
+  family-tree.tsx  家族树画布：可缩放 / 可拖拽 / 回到「我」/ 防误触（CLICK_SLOP）
+  tree-g6.tsx      G6 渲染引擎：**复用自研几何**，CDN 注入，preset 定位
   avatar.tsx       头像（照片 + 首字回退），卡片与画布共用
   ui/              shadcn 风格原语：button / input / label / sheet / collapsible
 lib/
   family.ts        纯函数数据层 —— 对 UI 零依赖，可单独测试
-                   （关系算法 + 五服 + 生肖 + 享年推导都在这里）
+                   （关系算法 + 关系选项规则 + 五服 + 生肖 + 享年推导都在这里）
   tree.ts          家族树布局算法（纯函数，可单独测试）
+  g6-scene.ts      自研布局 → G6 数据的翻译层（纯函数）
+  lineage.ts       亲系分类 / 筛选 / 世代标签
+  kinship.ts       亲属称谓推导（三门县用法，含连襟 / 妯娌等多跳姻亲）
+  layout-mode.ts   布局引擎模式（自研/G6）的 localStorage 持久化
+  dev-sample.ts    开发模式示例数据加载（public/laotagong-*.json）
   theme.ts         自研主题（非 next-themes）
   utils.ts         cn()
 scripts/
@@ -170,6 +176,60 @@ spouses = [{a, b}]                        ← 婚姻边（可选、独立）
 
 `laotagong:family:v1`。`sanitizeState` 是字段白名单强转——不认识的键直接丢弃。
 若要改 schema 或换键，**必须同时写迁移函数**，否则老用户数据会被静默清空。
+
+### 7. 关系选项的规则只有一处
+
+添加关系的六种细分选项（父/母/夫/妻/子/女）的**可用性与默认性别**全部在
+`lib/family.ts` 的 `relationOptions` / `relationDisabledReason` /
+`defaultGenderFor`。规则：
+
+- 男性不能添加丈夫、女性不能添加妻子（性别未知不设限）；
+- 已有父/母/配偶（或共同养育者）时对应选项禁用；
+- 父/夫/子默认男，母/妻/女默认女（用户仍可在表单改）。
+
+组件只消费不散写。细分关系经 `relationBaseOf` 归约成三种边操作
+（夫/妻 → 配偶、子/女 → 子女），**底层不变量不受影响**：
+`parents` 仍只经 `addParentLink`，`spouses` 仍只经 `addSpouseLink`。
+
+`spouseGenderConflictReason` 是同一规则在**关联已有成员**时的数据层兜底
+（两位已知同性别的人不可结为配偶），在 `handleAddRelation` /
+`handleLinkExistingAsSpouse` 里复查——选择面板的过滤只是 UI 层，
+表单里的性别可改，兜底必须挡。
+
+### 8. 双布局引擎共享同一几何
+
+「设置」里可切换自研 / G6 两种渲染。**G6 不是第二套布局**：
+`lib/g6-scene.ts` 的 `buildG6Scene()` 调同一个 `layoutFamilyTree()`，
+把节点坐标（左上角换算成中心）、连线 `d` 路径、世代条带翻译成 G6 数据；
+G6 侧不传 layout（preset 定位），连线用注册的自定义边
+`RouteEdge`（`getKeyPath` 直接返回 `data.path`）。
+
+历史上 G6 用 dagre 自动布局，配偶边参与排秩把夫妻拆到不同层、
+连锁推歪下方所有世代，正是「G6 看不了辈分」的根因——已废弃。
+**改 `lib/tree.ts` 的几何，两个引擎同时变**；`routes.geometry.test.ts`
+的采样守卫因此同时守护两者。G6 依赖走 CDN 注入（bundling @antv/g6
+会挂死 Turbopack 静态导出），自定义边依赖的 `register` / `BaseEdge` /
+`ExtensionCategory` 需在 UMD 全局上存在，缺任一则显示降级提示。
+
+G6 侧两个实测踩坑（CDN 5.0.x）：
+
+- **html 节点按左上角锚定**，不是文档暗示的中心。所以 `buildG6Scene`
+  直接给布局框左上角坐标，卡片足迹必须等于 `NODE_W × NODE_H`
+  （208×132）——卡片小于布局框时，routes 端点会落到卡片之外的空处；
+- **自定义边的 path 藏在 `data.data.path`**（`getEdgeData(id)` 返回
+  `{ data: {...} }`，path 在内层 data 里），且 `getEndpoints` 返回
+  `[x, y]` 数组而不是 `{x, y}` 对象——兜底直线按数组取。重名 register
+  会抛（HMR 重置模块标志后），包 try/catch。
+
+### 9. 开发示例数据只进本机
+
+`public/laotagong-*.json` 是**用户自己的数据导出**（可能含真实亲属信息），
+`.gitignore` 已排除，不进版本库。`lib/dev-sample.ts` 的 `loadDevSample()`：
+
+- 仅 `NODE_ENV=development` 生效（构建期内联，生产摇掉）；
+- 默认只在 localStorage 为空时载入，**绝不动用户数据**；
+  `force = true`（设置弹窗「重载示例数据」按钮）才覆盖；
+- fetch 相对路径，自动兼容 basePath；失败静默返回 null。
 
 ---
 
@@ -304,10 +364,12 @@ updater **不会立刻执行**。`pointermove` 是连续事件，React 会推迟
 - 输入框的 `focus:ring-2` 会被 `overflow-y-auto` 容器裁掉（CSS 规范规定
   一轴为 auto 时另一轴也变 auto）。所以滚动容器一律带 `px-1`。
 - 顶栏四个图标：品牌 / 查找 / 数据 / 主题，后三个都是**弹窗**，
-  不做内联展开——内联面板会把图谱往下推。页脚只有一行署名。
-- **添加亲属的入口在人物详情面板里**（+ 父亲 / + 母亲 / + 配偶 / + 子女）。
+  不做内联展开——内联面板会把图谱往下推。设置弹窗是**居中 modal**
+  （`SheetContent side="center"`），页脚只有一行署名。
+- **添加亲属的入口在人物详情面板里**（+ 父亲 / + 母亲 / + 丈夫或妻子 / + 儿子 / + 女儿，
+  规则见「数据不变量 7」），画布卡片侧栏的「增加关系」会先弹关系选择面板。
   从前挂在树的空槽上，换成画布后没有空槽了，必须留个明确入口。
-  只有缺失的槽位才显示对应按钮。
+  只有可用的选项才显示按钮。
 - 点击画布节点 = 打开详情，**不重定心**（同卡片的规则）。
 - 卡片上的三个动作按钮各占 **44×44**（Apple 最小点击区）。挤在一起必然误触，
   宁可把卡片做大。动作区要 `onPointerDown` 阻止冒泡，否则按按钮会顺手拖动画布。
@@ -354,7 +416,15 @@ updater **不会立刻执行**。`pointermove` 是连续事件，React 会推迟
 会不会撞上别的卡片」，改完把新形态加进采样测试。
 
 交互：滚轮/双指缩放（以指针位置为锚点，不是以中心）、拖拽平移、
-右下角四个按钮（放大 / 缩小 / 看全族 / 回到「我」）。
+右下角四个按钮（放大 / 缩小 / 看全族 / 回到「我」，40px 触控目标——
+28px 的 `icon-sm` 在手机上按不中）。
+
+**防误触（CLICK_SLOP = 8px）**：单指按下后的最远位移被记录，抬手时若超过
+阈值则置 `suppressClick`，紧随其后派发的卡片 click 被吞掉。手机上想平移
+画布、手指按在卡片上轻微抖动时，浏览器仍会派发 click，不吞就会误开人物
+详情。机制上依赖「click 在 pointerup 之后派发」这一事件顺序；动作栏按钮
+的 `onPointerDown` 阻止冒泡、不走平移路径，因此不受影响。回归测试在
+`test/tree-canvas.test.tsx`（拖拽后吞 click / 原地轻点仍打开，两条都在）。
 
 几个容易踩的点：
 - `wheel` 必须用**非 passive** 的原生监听，否则 `preventDefault` 无效、页面会跟着滚

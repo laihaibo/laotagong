@@ -1,6 +1,16 @@
 export type Gender = "male" | "female" | "unknown";
 
-export type RelationKind = "father" | "mother" | "spouse" | "child";
+/** 添加关系时用户可选的六种细分关系 */
+export type RelationKind =
+  | "father"
+  | "mother"
+  | "husband"
+  | "wife"
+  | "son"
+  | "daughter";
+
+/** 底层边操作：父母槽位（唯一构造者 addParentLink）· 配偶 · 子女 */
+export type RelationBase = "father" | "mother" | "spouse" | "child";
 
 export const EVENT_TYPES = [
   "marriage",
@@ -504,6 +514,91 @@ export function genderLabel(g: Gender): string {
   if (g === "male") return "男";
   if (g === "female") return "女";
   return "未知";
+}
+
+// ─────────────────────────────────────────────────────────────
+// 关系选项（可用性与默认性别的唯一规则表，组件只消费不散写）
+// ─────────────────────────────────────────────────────────────
+
+export interface RelationOption {
+  kind: RelationKind;
+  label: string;
+  /** 新建人物时预填的性别（用户仍可在表单里改） */
+  defaultGender: "male" | "female";
+  /** 不可用原因；可用时为 null */
+  disabledReason: string | null;
+}
+
+const RELATION_META: Record<
+  RelationKind,
+  { label: string; defaultGender: "male" | "female" }
+> = {
+  father: { label: "父亲", defaultGender: "male" },
+  mother: { label: "母亲", defaultGender: "female" },
+  husband: { label: "丈夫", defaultGender: "male" },
+  wife: { label: "妻子", defaultGender: "female" },
+  son: { label: "儿子", defaultGender: "male" },
+  daughter: { label: "女儿", defaultGender: "female" },
+};
+
+export const RELATION_KINDS = Object.keys(RELATION_META) as RelationKind[];
+
+export interface RelationAvailability {
+  hasFather?: boolean;
+  hasMother?: boolean;
+  /** 已有配偶或共同养育者 */
+  hasPartner?: boolean;
+}
+
+/** 单个关系选项对 forGender 的人是否可用；返回不可用原因，null = 可用 */
+export function relationDisabledReason(
+  kind: RelationKind,
+  forGender: Gender,
+  existing: RelationAvailability = {}
+): string | null {
+  if (kind === "father") return existing.hasFather ? "已有父亲" : null;
+  if (kind === "mother") return existing.hasMother ? "已有母亲" : null;
+  if (kind === "husband" || kind === "wife") {
+    if (existing.hasPartner) return "已有配偶或共同养育者";
+    if (forGender === "male" && kind === "husband") return "男性不能添加丈夫";
+    if (forGender === "female" && kind === "wife") return "女性不能添加妻子";
+  }
+  return null;
+}
+
+/** 六种关系选项及其可用性；顺序固定：父/母/夫/妻/子/女 */
+export function relationOptions(
+  forGender: Gender,
+  existing: RelationAvailability = {}
+): RelationOption[] {
+  return RELATION_KINDS.map((kind) => ({
+    kind,
+    label: RELATION_META[kind].label,
+    defaultGender: RELATION_META[kind].defaultGender,
+    disabledReason: relationDisabledReason(kind, forGender, existing),
+  }));
+}
+
+/** 新建人物时按关系种类预填的性别：父/夫/子 → 男，母/妻/女 → 女 */
+export function defaultGenderFor(kind: RelationKind): "male" | "female" {
+  return RELATION_META[kind].defaultGender;
+}
+
+/** 细分关系归约到底层边操作：夫/妻 → 配偶，子/女 → 子女 */
+export function relationBaseOf(kind: RelationKind): RelationBase {
+  if (kind === "husband" || kind === "wife") return "spouse";
+  if (kind === "son" || kind === "daughter") return "child";
+  return kind;
+}
+
+/**
+ * 两位已知性别相同的人不可结为配偶——「男不能有丈夫、女不能有妻子」
+ * 在数据层的表达。性别未知不设限。
+ */
+export function spouseGenderConflictReason(a: Gender, b: Gender): string | null {
+  if (a === "male" && b === "male") return "两位男性不能结为配偶";
+  if (a === "female" && b === "female") return "两位女性不能结为配偶";
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────

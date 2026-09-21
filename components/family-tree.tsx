@@ -36,6 +36,12 @@ import { cn } from "@/lib/utils";
 const MIN_SCALE = 0.18;
 const MAX_SCALE = 2.5;
 const ZOOM_STEP = 1.15;
+/**
+ * 点按与拖拽的判定阈值：位移超过它算拖拽，抬手时吞掉紧随其后的 click。
+ * 手机上想平移画布、手指按在卡片上轻微抖动时，浏览器仍会派发 click，
+ * 不吞掉就会误开人物详情——这是移动端误触的主源头。
+ */
+const CLICK_SLOP = 8;
 
 const LINEAGE_STROKE: Record<LineageKind, string> = {
   ego: "var(--line-ego)",
@@ -158,6 +164,9 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const panOrigin = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const pinchOrigin = useRef<{ distance: number; scale: number } | null>(null);
+  /** 本轮手势里指针离按下点的最远位移；抬手时据此决定是否吞掉 click */
+  const dragDistance = useRef(0);
+  const suppressClick = useRef(false);
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -167,6 +176,7 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
       /* pointerId 失效 */
     }
     if (pointers.current.size === 1) {
+      dragDistance.current = 0;
       panOrigin.current = {
         x: event.clientX,
         y: event.clientY,
@@ -208,6 +218,7 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
       const origin = panOrigin.current;
       const dx = event.clientX - origin.x;
       const dy = event.clientY - origin.y;
+      dragDistance.current = Math.max(dragDistance.current, Math.hypot(dx, dy));
       setView((v) => ({ ...v, x: origin.vx + dx, y: origin.vy + dy }));
     }
   };
@@ -215,7 +226,13 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
   const endPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     pointers.current.delete(event.pointerId);
     if (pointers.current.size < 2) pinchOrigin.current = null;
-    if (pointers.current.size === 0) panOrigin.current = null;
+    if (pointers.current.size === 0) {
+      panOrigin.current = null;
+      // click 在 pointerup 之后派发：这里置好的标记正好被卡片 onClick 读到。
+      // 每次抬手都重算并清零，动作栏按钮（pointerdown 被拦截、不走平移）不受影响。
+      suppressClick.current = dragDistance.current > CLICK_SLOP;
+      dragDistance.current = 0;
+    }
   };
 
   const zoomCenter = (factor: number) => {
@@ -268,12 +285,8 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
         >
           小地图
         </button>
-        <div data-layout-mode-chips className="ml-1 inline-flex items-center gap-1 rounded-full border border-[var(--glass-border)] px-2 py-0.5 text-[10px] text-[var(--ink-faint)]">
-          <span>布局</span>
-          <span className={cn("rounded-full px-1.5 py-0.5", layoutMode === "custom" ? "glass-btn text-[var(--ink)]" : "")}>自研</span>
-          <span className={cn("rounded-full px-1.5 py-0.5", layoutMode === "g6" ? "glass-btn text-[var(--ink)]" : "")}>G6</span>
-        </div>
-        <div className="ml-auto flex items-center gap-2 text-[10px] text-[var(--ink-faint)]">
+        {/* 布局引擎的切换入口在「设置」弹窗里；工具条上不再放假的指示 chips */}
+        <div className="ml-auto flex items-center gap-2 text-[10px] text-[var(--ink-faint)] sm:gap-3">
           <LegendDot color="var(--line-paternal)" label="父系" />
           <LegendDot color="var(--line-maternal)" label="母系" />
           <LegendDot color="var(--line-spouse)" label="姻亲" />
@@ -315,6 +328,7 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
               meId={state.meId}
               focusId={focusId}
               kinship={kinship}
+              suppressClickRef={suppressClick}
               onOpenPerson={onOpenPerson}
               onAddRelation={onAddRelation}
               onSetMe={onSetMe}
@@ -348,19 +362,20 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
         )}
 
         <div className="pointer-events-none absolute bottom-3 right-3 flex flex-col gap-1.5">
-          <Button variant="glass" size="icon-sm" className="pointer-events-auto" onClick={() => zoomCenter(ZOOM_STEP)} title="放大">
+          {/* icon-sm(28px) 在手机上太小，换 h-10 w-10 的 40px 触控目标 */}
+          <Button variant="glass" size="icon" className="pointer-events-auto h-10 w-10" onClick={() => zoomCenter(ZOOM_STEP)} title="放大">
             <Plus className="h-4 w-4" />
           </Button>
-          <Button variant="glass" size="icon-sm" className="pointer-events-auto" onClick={() => zoomCenter(1 / ZOOM_STEP)} title="缩小">
+          <Button variant="glass" size="icon" className="pointer-events-auto h-10 w-10" onClick={() => zoomCenter(1 / ZOOM_STEP)} title="缩小">
             <Minus className="h-4 w-4" />
           </Button>
-          <Button variant="glass" size="icon-sm" className="pointer-events-auto" onClick={fitAll} title="看全族">
+          <Button variant="glass" size="icon" className="pointer-events-auto h-10 w-10" onClick={fitAll} title="看全族">
             <Maximize2 className="h-4 w-4" />
           </Button>
           <Button
             variant="glass"
-            size="icon-sm"
-            className="pointer-events-auto"
+            size="icon"
+            className="pointer-events-auto h-10 w-10"
             onClick={() => centerOn(state.meId ?? focusId, 1)}
             title="回到「我」"
           >
@@ -375,9 +390,10 @@ const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
 
 function LegendDot({ color, label }: { color: string; label: string }) {
   return (
-    <span className="inline-flex items-center gap-1">
+    // 窄屏只留色点，文字收进 title（悬停/长按可见），给筛选 chips 腾空间
+    <span className="inline-flex items-center gap-1" title={label}>
       <span className="h-2 w-2 rounded-full" style={{ background: color }} />
-      {label}
+      <span className="hidden sm:inline">{label}</span>
     </span>
   );
 }
@@ -449,6 +465,7 @@ const TreeScene = memo(function TreeScene({
   meId,
   focusId,
   kinship,
+  suppressClickRef,
   onOpenPerson,
   onAddRelation,
   onSetMe,
@@ -458,6 +475,7 @@ const TreeScene = memo(function TreeScene({
   meId: string | null;
   focusId: string | null;
   kinship: Map<string, string>;
+  suppressClickRef: React.RefObject<boolean>;
   onOpenPerson: (id: string) => void;
   onAddRelation: (id: string) => void;
   onSetMe: (id: string) => void;
@@ -540,7 +558,11 @@ const TreeScene = memo(function TreeScene({
           >
             <button
               type="button"
-              onClick={() => onOpenPerson(node.id)}
+              onClick={() => {
+                // 拖拽平移后的 click 不是「点开」，直接吞掉（见 CLICK_SLOP）
+                if (suppressClickRef.current) return;
+                onOpenPerson(node.id);
+              }}
               className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-2 text-center"
             >
               <Avatar person={person} size={isMe ? "sm" : "xs"} />

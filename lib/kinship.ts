@@ -178,6 +178,18 @@ function kinshipInner(
     return "夫姐妹";
   }
 
+  // ── 配偶的兄弟姐妹的配偶：连襟（妻的姐妹的丈夫）/ 妯娌（夫的兄弟的妻子）──
+  // 三跳姻亲，距离兜底只会给出「同辈」，必须显式成词。
+  // 性别未知默认按男性分支（与本文件开头约定一致）。
+  for (const sid of mySpouses) {
+    for (const otherId of Object.keys(state.persons)) {
+      if (otherId === meId || otherId === sid || otherId === personId) continue;
+      if (!shareParents(state, sid, otherId)) continue;
+      if (!isSpouse(state, otherId, personId)) continue;
+      return gMe === "female" ? "妯娌" : "连襟";
+    }
+  }
+
   const hisP = state.parents[personId];
   if (myP && hisP && shareParents(state, meId, personId)) {
     const elder = isElder(person, me);

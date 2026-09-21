@@ -11,7 +11,7 @@
 ```bash
 pnpm dev              # 开发服务器（Node ≥ 22，pnpm）
 pnpm build            # 静态导出到 out/
-pnpm test             # vitest + jsdom 全量（当前 132 个）
+pnpm test             # vitest + jsdom 全量（当前 167 个）
 pnpm test:watch
 npx tsc --noEmit      # 类型检查（package.json 无 typecheck 脚本）
 node scripts/check-contrast.mjs   # token 漂移守卫（不是对比度验收）
@@ -25,9 +25,13 @@ node scripts/check-contrast.mjs   # token 漂移守卫（不是对比度验收�
 
 ```
 app/            Next.js App Router；globals.css 是唯一设计 token 来源
-components/     family-tree.tsx（画布）、family-app.tsx（外壳+弹窗）、ui/（shadcn 风格）
-lib/            纯函数层：family.ts（数据+关系算法）、tree.ts（布局+连线几何）、
-                lineage.ts（亲系）、kinship.ts（称谓）、theme.ts（自研主题）
+components/     family-tree.tsx（画布+防误触）、family-app.tsx（外壳+弹窗）、
+                tree-g6.tsx（G6 渲染引擎）、ui/（shadcn 风格）
+lib/            纯函数层：family.ts（数据+关系算法+关系选项规则）、
+                tree.ts（布局+连线几何）、g6-scene.ts（自研几何→G6 数据）、
+                lineage.ts（亲系）、kinship.ts（称谓，含连襟/妯娌等多跳姻亲）、
+                layout-mode.ts（布局引擎持久化）、dev-sample.ts（开发示例数据）、
+                theme.ts（自研主题）
 test/           vitest + jsdom；routes.geometry.test.ts 是连线几何守卫
 docs/screenshots/  README 用的真实截图（1440×860）
 scripts/        check-contrast.mjs 之外都是一次性 codemod，勿执行
@@ -51,6 +55,16 @@ scripts/        check-contrast.mjs 之外都是一次性 codemod，勿执行
 6. **CSS 级联陷阱**：Tailwind 4 工具类在 `@layer utilities`，而 `globals.css` 的
    自定义类（`.glass-card` 等）未分层——**未分层样式赢**。给带自定义类的元素定位，
    position 必须写内联 style（画布节点就是这么修的）。
+7. **关系选项规则只在 lib 一处**：六种细分关系（父/母/夫/妻/子/女）的可用性
+   （男不能加丈夫、女不能加妻子、已有槽位禁用）与默认性别（父/夫/子→男、
+   母/妻/女→女）全部在 `lib/family.ts` 的 `relationOptions`；组件只消费。
+   细分关系经 `relationBaseOf` 归约成三种边操作，`spouses` 仍只经 `addSpouseLink`。
+8. **双布局引擎共享同一几何**：G6 模式（`lib/g6-scene.ts`）调同一个
+   `layoutFamilyTree()`，preset 定位 + 自定义边渲染总线连线；**不要给 G6
+   喂 dagre 之类自动布局**（配偶边参与排秩会毁掉辈分行对齐）。
+   改 `lib/tree.ts` 几何两个引擎同时变，采样守卫同时守护两者。
+9. **`public/laotagong-*.json` 是本机示例/个人数据，不进版本库**（.gitignore 已排除）；
+   `lib/dev-sample.ts` 只在开发模式且本机存储为空时自动载入。
 
 ## 平台与编码
 

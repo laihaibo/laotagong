@@ -13,6 +13,7 @@ import {
   Monitor,
   Moon,
   Plus,
+  RefreshCw,
   Search,
   Settings2,
   Sun,
@@ -24,6 +25,7 @@ import {
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { FamilyTree } from "@/components/family-tree";
+import { loadDevSample } from "@/lib/dev-sample";
 import {
   LAYOUT_MODE_META,
   type LayoutMode,
@@ -47,6 +49,7 @@ import {
   type FamilyState,
   type Gender,
   type Person,
+  type RelationBase,
   type RelationKind,
   type WufuResult,
   EVENT_TYPES,
@@ -59,6 +62,7 @@ import {
   areSpouses,
   createEmptyState,
   createPerson,
+  defaultGenderFor,
   exportState,
   getFatherId,
   getMotherId,
@@ -69,8 +73,11 @@ import {
   linkChildWithParents,
   loadState,
   newId,
+  relationBaseOf,
+  relationOptions,
   removePersonDeep,
   saveState,
+  spouseGenderConflictReason,
 } from "@/lib/family";
 import {
   type ThemeMode,
@@ -91,15 +98,16 @@ const THEME_META: Record<ThemeMode, { label: string; icon: typeof Sun }> = {
 
 
 /**
- * 新建一个关系：把「关系种类 + 焦点 + 新人物」映射成一个**纯函数**
+ * 新建一个关系：把「边操作种类 + 焦点 + 新人物」映射成一个**纯函数**
  * `FamilyState -> FamilyState`。
  *
- * 用查表取代 if/else 链：每个关系类型就是一个可单独测试、可单独替换的纯函数，
- * 也不用在分支里手写不可变更新。`father` / `mother` 显式传 mode，
- * 因为那是用户的选择，不该由性别推导覆盖。
+ * 用查表取代 if/else 链：每种边操作就是一个可单独测试、可单独替换的纯函数，
+ * 也不用在分支里手写不可变更新。细分的六种关系（夫/妻/子/女）先经
+ * `relationBaseOf` 归约到这四种边操作，可用性规则统一在 lib 的
+ * `relationOptions` 里，组件不散写。
  */
 const RELATION_APPLIERS: Record<
-  RelationKind,
+  RelationBase,
   (state: FamilyState, focusId: string, personId: string) => FamilyState
 > = {
   father: (state, focusId, personId) =>
@@ -177,6 +185,7 @@ export function FamilyApp() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const loaded = loadState();
 
     // 存量数据修复：写入路径的对称回填只作用于「新建」的关系，
@@ -198,6 +207,17 @@ export function FamilyApp() {
       setToast(`已修复 ${repairable.length} 处缺失的双亲关系`);
     }
     if (unresolved.length > 0) setAmbiguous(unresolved);
+
+    // 开发模式且本机无数据时，自动载入 public/ 下的示例数据（见 lib/dev-sample.ts）
+    loadDevSample().then((sample) => {
+      if (!sample || cancelled) return;
+      setState(sample);
+      setFocusId(sample.meId ?? firstPersonId(sample));
+      setToast("已载入开发示例数据");
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -251,9 +271,20 @@ export function FamilyApp() {
   const handleAddRelation = useCallback(
     (mode: RelationKind, draft: { name: string; gender: Gender }) => {
       if (!focus) return;
+      // 兜底校验：选择面板已按性别过滤，但表单里的性别可改，这里再挡一道
+      if (relationBaseOf(mode) === "spouse") {
+        const conflict = spouseGenderConflictReason(
+          state.persons[focus]?.gender ?? "unknown",
+          draft.gender
+        );
+        if (conflict) {
+          setToast(conflict);
+          return;
+        }
+      }
       const person = createPerson(draft);
       setState((s) =>
-        RELATION_APPLIERS[mode](
+        RELATION_APPLIERS[relationBaseOf(mode)](
           { ...s, persons: { ...s.persons, [person.id]: person } },
           focus,
           person.id
@@ -262,7 +293,7 @@ export function FamilyApp() {
       setAddMode(null);
       setToast("已添加");
     },
-    [focus]
+    [focus, state.persons]
   );
 
   const handleLinkExistingAsChild = useCallback(
@@ -288,11 +319,19 @@ export function FamilyApp() {
   const handleLinkExistingAsSpouse = useCallback(
     (otherId: string) => {
       if (!focus || otherId === focus) return;
+      const conflict = spouseGenderConflictReason(
+        state.persons[focus]?.gender ?? "unknown",
+        state.persons[otherId]?.gender ?? "unknown"
+      );
+      if (conflict) {
+        setToast(conflict);
+        return;
+      }
       setState((s) => addSpouseLink(s, focus, otherId));
       setAddMode(null);
       setToast("已结为配偶");
     },
-    [focus]
+    [focus, state.persons]
   );
 
   const exportJson = useCallback(() => {
@@ -327,6 +366,19 @@ export function FamilyApp() {
     setState(createEmptyState());
     setFocusId(null);
     setToast("已清空");
+  }, []);
+
+  /** 设置弹窗里的「重载示例数据」：无视现有数据，直接用 public/ 下的示例覆盖（仅开发模式可见） */
+  const reloadDevSample = useCallback(async () => {
+    const sample = await loadDevSample(true);
+    if (sample) {
+      setState(sample);
+      setFocusId(sample.meId ?? firstPersonId(sample));
+      setSettingsOpen(false);
+      setToast("已重载示例数据");
+    } else {
+      setToast("示例数据不可用");
+    }
   }, []);
 
   /**
@@ -478,7 +530,7 @@ export function FamilyApp() {
 
       
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <SheetContent side="bottom">
+        <SheetContent side="center">
           <SheetHeader>
             <SheetTitle>设置</SheetTitle>
             <SheetDescription>布局引擎等显示偏好</SheetDescription>
@@ -505,6 +557,19 @@ export function FamilyApp() {
                 </button>
               ))}
             </div>
+            {process.env.NODE_ENV === "development" && (
+              <>
+                <Label>开发</Label>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={reloadDevSample}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  重载示例数据
+                </Button>
+              </>
+            )}
           </div>
         </SheetContent>
       </Sheet>
@@ -567,25 +632,31 @@ export function FamilyApp() {
             </SheetDescription>
           </SheetHeader>
           <div className="grid grid-cols-2 gap-2 pb-2">
-            {(
-              [
-                ["father", "父亲"],
-                ["mother", "母亲"],
-                ["spouse", "配偶"],
-                ["child", "子女"],
-              ] as const
-            ).map(([mode, label]) => (
+            {relationOptions(
+              relationPickerFor
+                ? state.persons[relationPickerFor]?.gender ?? "unknown"
+                : "unknown",
+              relationPickerFor
+                ? {
+                    hasFather: !!getFatherId(state, relationPickerFor),
+                    hasMother: !!getMotherId(state, relationPickerFor),
+                    hasPartner: getPartnerIds(state, relationPickerFor).length > 0,
+                  }
+                : {}
+            ).map((opt) => (
               <Button
-                key={mode}
+                key={opt.kind}
                 variant="outline"
                 className="h-12"
+                disabled={!!opt.disabledReason}
+                title={opt.disabledReason ?? undefined}
                 onClick={() => {
                   setFocusId(relationPickerFor);
                   setRelationPickerFor(null);
-                  setAddMode(mode);
+                  setAddMode(opt.kind);
                 }}
               >
-                {label}
+                {opt.label}
               </Button>
             ))}
           </div>
@@ -1328,48 +1399,28 @@ function PersonEditSheet({
           />
         </div>
 
-        {/* 添加亲属的入口。原本挂在树的空槽上，改用画布后必须换个地方。 */}
+        {/* 添加亲属的入口。原本挂在树的空槽上，改用画布后必须换个地方。
+            可用性与默认性别规则在 lib 的 relationOptions，与选择面板同源。 */}
         <div className="space-y-1 pt-1">
           <Label>添加亲属</Label>
           <div className="flex flex-wrap gap-1.5">
-            {!getFatherId(state, draft.id) && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => onAddRelation("father")}
-              >
-                + 父亲
-              </Button>
-            )}
-            {!getMotherId(state, draft.id) && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => onAddRelation("mother")}
-              >
-                + 母亲
-              </Button>
-            )}
-            {getPartnerIds(state, draft.id).length === 0 && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => onAddRelation("spouse")}
-              >
-                + 配偶
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onAddRelation("child")}
-            >
-              + 子女
-            </Button>
+            {relationOptions(draft.gender, {
+              hasFather: !!getFatherId(state, draft.id),
+              hasMother: !!getMotherId(state, draft.id),
+              hasPartner: getPartnerIds(state, draft.id).length > 0,
+            })
+              .filter((opt) => !opt.disabledReason)
+              .map((opt) => (
+                <Button
+                  key={opt.kind}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onAddRelation(opt.kind)}
+                >
+                  + {opt.label}
+                </Button>
+              ))}
           </div>
         </div>
 
@@ -1460,23 +1511,23 @@ function AddRelationSheet({
       setTab("new");
       setName("");
       setSearch("");
-      setGender(
-        mode === "father" ? "male" : mode === "mother" ? "female" : "unknown"
-      );
+      setGender(mode ? defaultGenderFor(mode) : "unknown");
     }
   }, [open, mode]);
 
-  const title =
-    mode === "father"
-      ? "添加父亲"
-      : mode === "mother"
-        ? "添加母亲"
-        : mode === "spouse"
-          ? "添加配偶"
-          : "添加子女";
+  const ADD_TITLES: Record<RelationKind, string> = {
+    father: "添加父亲",
+    mother: "添加母亲",
+    husband: "添加丈夫",
+    wife: "添加妻子",
+    son: "添加儿子",
+    daughter: "添加女儿",
+  };
+  const title = mode ? ADD_TITLES[mode] : "添加关系";
 
   const candidates = useMemo(() => {
     if (!focusId || !mode) return [];
+    const base = relationBaseOf(mode);
     return Object.values(allPersons)
       .filter((p) => p.id !== focusId)
       .filter((p) => {
@@ -1489,8 +1540,13 @@ function AddRelationSheet({
         );
       })
       .filter((p) => {
-        if (mode === "spouse") return !areSpouses(state, focusId, p.id);
-        if (mode === "child") {
+        if (base === "spouse") {
+          if (areSpouses(state, focusId, p.id)) return false;
+          // 夫/妻已经表达了期望性别；性别未知的候选不排除
+          const want = mode === "husband" ? "male" : "female";
+          return p.gender === "unknown" || p.gender === want;
+        }
+        if (base === "child") {
           const parents = state.parents[p.id];
           return (
             parents?.fatherId !== focusId && parents?.motherId !== focusId
@@ -1550,7 +1606,7 @@ function AddRelationSheet({
               />
             </div>
             <GenderPicker value={gender} onChange={setGender} />
-            {mode === "child" && (
+            {relationBaseOf(mode ?? "father") === "child" && (
               <p className="text-caption text-[var(--ink-faint)]">
                 若当前人物有配偶，将自动关联为双亲。
               </p>
@@ -1586,9 +1642,10 @@ function AddRelationSheet({
                     type="button"
                     onClick={() => {
                       if (!mode) return;
-                      if (mode === "child") onLinkChild(p.id);
-                      else if (mode === "spouse") onLinkSpouse(p.id);
-                      else onLinkParent(p.id, mode);
+                      const base = relationBaseOf(mode);
+                      if (base === "child") onLinkChild(p.id);
+                      else if (base === "spouse") onLinkSpouse(p.id);
+                      else onLinkParent(p.id, base);
                     }}
                     className="glass flex w-full items-center gap-3 rounded-2xl p-3 text-left transition hover:brightness-105"
                   >

@@ -184,4 +184,54 @@ describe("家族树画布 · 指针交互", () => {
       ).toBe("absolute");
     }
   });
+
+  it("拖拽平移超过阈值后抬手，紧随的 click 不打开卡片（防手机误触）", async () => {
+    const opened: string[] = [];
+    await act(async () => {
+      root.render(
+        <FamilyTree
+          state={family()}
+          focusId="ME"
+          onOpenPerson={(id) => opened.push(id)}
+          onAddRelation={() => {}}
+          onSetMe={() => {}}
+        />
+      );
+    });
+    const canvas = container.querySelector("[data-tree-canvas]")!;
+    const card = container.querySelector("[data-tree-node] button")!;
+    expect(card).not.toBeNull();
+
+    act(() => {
+      canvas.dispatchEvent(pointer("pointerdown", { pointerId: 5, clientX: 100, clientY: 100 }));
+      canvas.dispatchEvent(pointer("pointermove", { pointerId: 5, clientX: 160, clientY: 140 }));
+      canvas.dispatchEvent(pointer("pointerup", { pointerId: 5, clientX: 160, clientY: 140 }));
+      card.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(opened).toEqual([]);
+  });
+
+  it("原地轻点卡片仍打开详情（slop 只吞拖拽后的 click）", async () => {
+    const opened: string[] = [];
+    await act(async () => {
+      root.render(
+        <FamilyTree
+          state={family()}
+          focusId="ME"
+          onOpenPerson={(id) => opened.push(id)}
+          onAddRelation={() => {}}
+          onSetMe={() => {}}
+        />
+      );
+    });
+    const canvas = container.querySelector("[data-tree-canvas]")!;
+    const card = container.querySelector("[data-tree-node] button")!;
+
+    act(() => {
+      canvas.dispatchEvent(pointer("pointerdown", { pointerId: 6, clientX: 30, clientY: 30 }));
+      canvas.dispatchEvent(pointer("pointerup", { pointerId: 6, clientX: 30, clientY: 30 }));
+      card.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(opened).toHaveLength(1);
+  });
 });
