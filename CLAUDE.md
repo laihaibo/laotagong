@@ -37,18 +37,16 @@ app/
   page.tsx         仅渲染 <FamilyApp />
 components/
   family-app.tsx   应用外壳 + 各种弹窗（待继续拆分）
-  family-tree.tsx  家族树画布：可缩放 / 可拖拽 / 回到「我」/ 防误触（CLICK_SLOP）
-  tree-g6.tsx      G6 渲染引擎：**复用自研几何**，CDN 注入，preset 定位
+  family-tree.tsx  家族树画布：可缩放 / 可拖拽 / 惯性滑行 / 回到「我」/ 防误触（CLICK_SLOP）
   avatar.tsx       头像（照片 + 首字回退），卡片与画布共用
   ui/              shadcn 风格原语：button / input / label / sheet / collapsible
 lib/
   family.ts        纯函数数据层 —— 对 UI 零依赖，可单独测试
                    （关系算法 + 关系选项规则 + 五服 + 生肖 + 享年推导都在这里）
   tree.ts          家族树布局算法（纯函数，可单独测试）
-  g6-scene.ts      自研布局 → G6 数据的翻译层（纯函数）
-  lineage.ts       亲系分类 / 筛选 / 世代标签
-  kinship.ts       亲属称谓推导（三门县用法，含连襟 / 妯娌等多跳姻亲）
-  layout-mode.ts   布局引擎模式（自研/G6）的 localStorage 持久化
+  lineage.ts       亲系分类 / 筛选 / 世代标签 + 血亲后代判定（isBloodDescendant）
+  kinship.ts       亲属称谓推导（三门县用法，含连襟 / 妯娌等多跳姻亲与兜底分桶）
+  view-prefs.ts    画布显示偏好（小地图、世代范围 ±1..±10）的 localStorage 持久化
   dev-sample.ts    开发模式示例数据加载（public/laotagong-*.json）
   theme.ts         自研主题（非 next-themes）
   utils.ts         cn()
@@ -196,30 +194,21 @@ spouses = [{a, b}]                        ← 婚姻边（可选、独立）
 `handleLinkExistingAsSpouse` 里复查——选择面板的过滤只是 UI 层，
 表单里的性别可改，兜底必须挡。
 
-### 8. 双布局引擎共享同一几何
+### 8. 单一渲染引擎；后代判定必须走血亲链
 
-「设置」里可切换自研 / G6 两种渲染。**G6 不是第二套布局**：
-`lib/g6-scene.ts` 的 `buildG6Scene()` 调同一个 `layoutFamilyTree()`，
-把节点坐标（左上角换算成中心）、连线 `d` 路径、世代条带翻译成 G6 数据；
-G6 侧不传 layout（preset 定位），连线用注册的自定义边
-`RouteEdge`（`getKeyPath` 直接返回 `data.path`）。
+G6 渲染引擎已于 2026-09 整体移除（`tree-g6.tsx` / `g6-scene.ts` /
+`layout-mode.ts` / `@antv/g6` 依赖均已删除），`lib/tree.ts` 的
+`layoutFamilyTree()` 是唯一几何来源，改几何看
+`routes.geometry.test.ts` 的采样守卫。
 
-历史上 G6 用 dagre 自动布局，配偶边参与排秩把夫妻拆到不同层、
-连锁推歪下方所有世代，正是「G6 看不了辈分」的根因——已废弃。
-**改 `lib/tree.ts` 的几何，两个引擎同时变**；`routes.geometry.test.ts`
-的采样守卫因此同时守护两者。G6 依赖走 CDN 注入（bundling @antv/g6
-会挂死 Turbopack 静态导出），自定义边依赖的 `register` / `BaseEdge` /
-`ExtensionCategory` 需在 UMD 全局上存在，缺任一则显示降级提示。
-
-G6 侧两个实测踩坑（CDN 5.0.x）：
-
-- **html 节点按左上角锚定**，不是文档暗示的中心。所以 `buildG6Scene`
-  直接给布局框左上角坐标，卡片足迹必须等于 `NODE_W × NODE_H`
-  （208×132）——卡片小于布局框时，routes 端点会落到卡片之外的空处；
-- **自定义边的 path 藏在 `data.data.path`**（`getEdgeData(id)` 返回
-  `{ data: {...} }`，path 在内层 data 里），且 `getEndpoints` 返回
-  `[x, y]` 数组而不是 `{x, y}` 对象——兜底直线按数组取。重名 register
-  会抛（HMR 重置模块标志后），包 try/catch。
+**「某人是不是我的后代」只能用 `lineage.ts` 的 `isBloodDescendant`**
+（从本人沿 parents 槽位向上走能否碰到我）。**绝不能用混合图 BFS 距离
+（`computeDistances` / `getRelationDistances`）判定**：配偶边在里面是
+权重 0 的图边，「我→老婆→岳父母→妻姐→妻姐的子女」会算出 d=+1，
+被误判成我的后代——这正是「父系/母系视图冒出老婆姐姐的子女、
+称谓还标成『子女』」这个已修复 bug 的根因（回归测试
+`test/lineage.affinal.test.ts`）。称谓兜底同理：血亲后代给世代称呼，
+经配偶边连通的按「姻亲长辈/同辈/晚辈」分桶，其余血亲按「远亲」分桶。
 
 ### 9. 开发示例数据只进本机
 
@@ -363,9 +352,10 @@ updater **不会立刻执行**。`pointermove` 是连续事件，React 会推迟
   操作按钮放在滚动区**之外**，这样保存永远不会被推走。
 - 输入框的 `focus:ring-2` 会被 `overflow-y-auto` 容器裁掉（CSS 规范规定
   一轴为 auto 时另一轴也变 auto）。所以滚动容器一律带 `px-1`。
-- 顶栏四个图标：品牌 / 查找 / 数据 / 主题，后三个都是**弹窗**，
+- 顶栏三个图标：品牌 / 查找 / 设置 / 主题，后两个都是**弹窗**，
   不做内联展开——内联面板会把图谱往下推。设置弹窗是**居中 modal**
-  （`SheetContent side="center"`），页脚只有一行署名。
+  （`SheetContent side="center"`），内含显示偏好（小地图开关）与
+  数据管理（导出/导入/清空），页脚只有一行署名。
 - **添加亲属的入口在人物详情面板里**（+ 父亲 / + 母亲 / + 丈夫或妻子 / + 儿子 / + 女儿，
   规则见「数据不变量 7」），画布卡片侧栏的「增加关系」会先弹关系选择面板。
   从前挂在树的空槽上，换成画布后没有空槽了，必须留个明确入口。
@@ -415,9 +405,17 @@ updater **不会立刻执行**。`pointermove` 是连续事件，React 会推迟
 （现在从行上方 28px 的空带绕）。改连线几何时先想清楚「线从哪里出发、
 会不会撞上别的卡片」，改完把新形态加进采样测试。
 
-交互：滚轮/双指缩放（以指针位置为锚点，不是以中心）、拖拽平移、
-右下角四个按钮（放大 / 缩小 / 看全族 / 回到「我」，40px 触控目标——
-28px 的 `icon-sm` 在手机上按不中）。
+交互：滚轮（按滚动量连续缩放，触控板顺滑；Shift+滚轮横向平移）/ 双指捏合
+（以双指中点为锚点）/ 拖拽平移（抬手带惯性滑行，速度采样间隔 <4ms 的
+样本跳过——合成事件会除零放大）；「回到我」「看全族」、小地图跳转与
++/− 按钮走 rAF 缓动飞行（`flyTo`），不是瞬移；拖拽/捏合期间卡片位置
+过渡关闭，筛选与代数切换时开启（`gesturing` state 控制）；缩放低于
+0.5 时卡片精简（隐藏生卒年等次要文字）；桌面键盘：方向键平移、
++/− 缩放、0 回到「我」（弹窗打开时不抢按键）；右下角四个按钮
+（放大 / 缩小 / 看全族 / 回到「我」，40px 触控目标——28px 的 `icon-sm`
+在手机上按不中）。世代范围步进器（±1..±10）与小地图显隐
+（设置弹窗里控制）分别持久化在 `view-prefs`（键
+`laotagong:view-prefs:v1`，读-改-写合并）。
 
 **防误触（CLICK_SLOP = 8px）**：单指按下后的最远位移被记录，抬手时若超过
 阈值则置 `suppressClick`，紧随其后派发的卡片 click 被吞掉。手机上想平移

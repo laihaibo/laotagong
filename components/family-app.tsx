@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Crown,
-  Database,
   Download,
   Heart,
   Home,
@@ -27,11 +26,12 @@ import { Avatar } from "@/components/avatar";
 import { FamilyTree } from "@/components/family-tree";
 import { loadDevSample } from "@/lib/dev-sample";
 import {
-  LAYOUT_MODE_META,
-  type LayoutMode,
-  loadLayoutMode,
-  saveLayoutMode,
-} from "@/lib/layout-mode";
+  DEFAULT_VIEW_PREFS,
+  type ViewPrefs,
+  LEGACY_LAYOUT_MODE_KEY,
+  loadViewPrefs,
+  saveViewPrefs,
+} from "@/lib/view-prefs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -173,13 +173,12 @@ export function FamilyApp() {
   const [addMode, setAddMode] = useState<AddMode>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [dataOpen, setDataOpen] = useState(false);
   /** 有多位配偶候选、无法自动确定的缺失双亲；等用户逐条指定 */
   const [ambiguous, setAmbiguous] = useState<AmbiguousLink[]>([]);
   const [ambiguousOpen, setAmbiguousOpen] = useState(false);
   /** 节点上的「增加关系」按钮：先选关系种类，再开新建表单 */
   const [relationPickerFor, setRelationPickerFor] = useState<string | null>(null);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("custom");
+  const [viewPrefs, setViewPrefs] = useState<ViewPrefs>(DEFAULT_VIEW_PREFS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -200,7 +199,13 @@ export function FamilyApp() {
     const mode = loadThemeMode();
     setThemeMode(mode);
     applyTheme(resolveTheme(mode));
-    setLayoutMode(loadLayoutMode());
+    setViewPrefs(loadViewPrefs());
+    // G6 渲染引擎已移除，顺手清掉废弃的持久化键
+    try {
+      window.localStorage.removeItem(LEGACY_LAYOUT_MODE_KEY);
+    } catch {
+      /* 存储不可用时忽略 */
+    }
     setHydrated(true);
 
     if (repairable.length > 0) {
@@ -233,9 +238,9 @@ export function FamilyApp() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const changeLayoutMode = useCallback((mode: LayoutMode) => {
-    setLayoutMode(mode);
-    saveLayoutMode(mode);
+  const changeShowMinimap = useCallback((show: boolean) => {
+    setViewPrefs((p) => ({ ...p, showMinimap: show }));
+    saveViewPrefs({ showMinimap: show });
   }, []);
 
   const changeTheme = useCallback((mode: ThemeMode) => {
@@ -440,15 +445,6 @@ export function FamilyApp() {
               variant="ghost"
               size="icon-sm"
               data-header-item
-              onClick={() => setDataOpen(true)}
-              title="数据管理"
-            >
-              <Database className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              data-header-item
               onClick={() => setSettingsOpen(true)}
               title="设置"
             >
@@ -496,7 +492,7 @@ export function FamilyApp() {
           <FamilyTree
             state={state}
             focusId={focus}
-            layoutMode={layoutMode}
+            showMinimap={viewPrefs.showMinimap}
             onOpenPerson={(id) => setEditingId(id)}
             onAddRelation={(id) => setRelationPickerFor(id)}
             onSetMe={(id) => setAsMe(id)}
@@ -533,55 +529,27 @@ export function FamilyApp() {
         <SheetContent side="center">
           <SheetHeader>
             <SheetTitle>设置</SheetTitle>
-            <SheetDescription>布局引擎等显示偏好</SheetDescription>
-          </SheetHeader>
-          <div className="space-y-3 pb-4">
-            <Label>布局引擎</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {(Object.keys(LAYOUT_MODE_META) as LayoutMode[]).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => changeLayoutMode(m)}
-                  className={cn(
-                    "rounded-2xl border px-3 py-3 text-left text-sm transition-all",
-                    layoutMode === m
-                      ? "glass-btn text-[var(--ink)]"
-                      : "border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
-                  )}
-                >
-                  <div className="font-medium">{LAYOUT_MODE_META[m].label}</div>
-                  <div className="mt-1 text-caption text-[var(--ink-faint)]">
-                    {LAYOUT_MODE_META[m].hint}
-                  </div>
-                </button>
-              ))}
-            </div>
-            {process.env.NODE_ENV === "development" && (
-              <>
-                <Label>开发</Label>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={reloadDevSample}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  重载示例数据
-                </Button>
-              </>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* 数据管理弹窗 */}
-      <Sheet open={dataOpen} onOpenChange={setDataOpen}>
-        <SheetContent side="responsive">
-          <SheetHeader>
-            <SheetTitle>数据管理</SheetTitle>
-            <SheetDescription>导出备份、导入恢复，或清空全部数据</SheetDescription>
+            <SheetDescription>显示偏好与数据管理</SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1">
+            <Label>显示偏好</Label>
+            <button
+              type="button"
+              onClick={() => changeShowMinimap(!viewPrefs.showMinimap)}
+              className={cn(
+                "flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition-all",
+                viewPrefs.showMinimap
+                  ? "glass-btn text-[var(--ink)]"
+                  : "border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
+              )}
+            >
+              <span className="text-body">小地图</span>
+              <span className="text-caption text-[var(--ink-faint)]">
+                {viewPrefs.showMinimap ? "已显示" : "已隐藏"}
+              </span>
+            </button>
+
+            <Label>数据管理</Label>
             <Button
               variant="outline"
               className="w-full justify-start"
@@ -606,9 +574,23 @@ export function FamilyApp() {
               <Trash2 className="h-4 w-4" />
               清空数据
             </Button>
-            <p className="pt-2 text-caption text-[var(--ink-faint)]">
+            <p className="pt-1 text-caption text-[var(--ink-faint)]">
               共 {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机浏览器
             </p>
+
+            {process.env.NODE_ENV === "development" && (
+              <>
+                <Label>开发</Label>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={reloadDevSample}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  重载示例数据
+                </Button>
+              </>
+            )}
           </div>
         </SheetContent>
       </Sheet>

@@ -706,12 +706,24 @@ export function getRelationDistances(
   const meId = state.meId;
   if (!meId || !state.persons[meId]) return distances;
 
+  // 子女索引只建一次：getChildrenIds 每次全表扫 parents，
+  // BFS 里逐节点调用就是 O(V·P)，±10 代的大图上很伤
+  const childIndex = new Map<string, string[]>();
+  for (const [childId, entry] of Object.entries(state.parents)) {
+    for (const parentId of [entry.fatherId, entry.motherId]) {
+      if (!parentId) continue;
+      const list = childIndex.get(parentId);
+      if (list) list.push(childId);
+      else childIndex.set(parentId, [childId]);
+    }
+  }
+
   const neighboursOf = (id: string): Array<[string, number]> => {
     const out: Array<[string, number]> = [];
     const p = state.parents[id];
     if (p?.fatherId) out.push([p.fatherId, -1]);
     if (p?.motherId) out.push([p.motherId, -1]);
-    for (const childId of getChildrenIds(state, id)) out.push([childId, 1]);
+    for (const childId of childIndex.get(id) ?? []) out.push([childId, 1]);
     for (const spouseId of getSpouseIds(state, id)) out.push([spouseId, 0]);
     // 按 id 排序，保证遍历与结果确定（否则同输入不同插入序会产生不同分组）
     return out.sort((x, y) => x[0].localeCompare(y[0]));
@@ -882,13 +894,22 @@ export function wufuOf(
 ): WufuResult | null {
   const meId = state.meId;
   if (!meId || !state.persons[meId] || !state.persons[personId]) return null;
+  return wufuRelativeTo(state, meId, personId, ancestorLevels(state, meId));
+}
+
+/** wufuOf 的核心，供批量版复用「我」的上溯表 */
+function wufuRelativeTo(
+  state: FamilyState,
+  meId: string,
+  personId: string,
+  myAncestors: Map<string, number>
+): WufuResult | null {
   if (meId === personId) return null;
 
   if (getSpouseIds(state, meId).includes(personId)) {
     return { grade: "齐衰", months: "本宗之外", basis: "配偶（服制与本宗血亲不同）" };
   }
 
-  const myAncestors = ancestorLevels(state, meId);
   const hisAncestors = ancestorLevels(state, personId);
 
   // 直系尊亲属
@@ -916,4 +937,20 @@ export function wufuOf(
     return { grade: "出服", months: "—", basis: "无共同祖先（姻亲或未连通）" };
   }
   return collateral(bestGen);
+}
+
+/**
+ * 批量版 wufuOf：画布逐卡显示五服徽标时用。
+ * 「我」的上溯表全图只算一次，其余与逐人版完全一致（测试守一致性）。
+ */
+export function buildWufuMap(state: FamilyState): Map<string, WufuResult> {
+  const map = new Map<string, WufuResult>();
+  const meId = state.meId;
+  if (!meId || !state.persons[meId]) return map;
+  const myAncestors = ancestorLevels(state, meId);
+  for (const id of Object.keys(state.persons)) {
+    const result = wufuRelativeTo(state, meId, id, myAncestors);
+    if (result) map.set(id, result);
+  }
+  return map;
 }

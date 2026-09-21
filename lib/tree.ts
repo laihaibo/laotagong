@@ -1,5 +1,6 @@
 import {
   type FamilyState,
+  type WufuResult,
   getChildrenIds,
   getCoParentIds,
   getRelationDistances,
@@ -11,6 +12,7 @@ import {
   classifyLineage,
     filterVisibleIds,
   generationLabel,
+  isBloodDescendant,
   pedigreePath,
   pedigreeSortKey,
   collateralSide,
@@ -74,6 +76,8 @@ export interface TreeLayout {
 export interface LayoutOptions {
   filter?: LineageFilter;
   maxDepth?: number;
+  /** 传入时只显示出服以内的成员（grade !== "出服"），与亲系筛选叠加 */
+  wufu?: Map<string, WufuResult>;
 }
 
 function buildUnits(state: FamilyState, ids: string[]): Map<string, string> {
@@ -171,23 +175,8 @@ function clusterRankOf(
     );
   };
 
-  /** 是否「我」的后代（沿 parents 上溯能碰到 meId） */
-  const isMeDescendant = (id: string): boolean => {
-    if (id === meId) return false;
-    const stack = [id];
-    const seen = new Set<string>();
-    while (stack.length > 0) {
-      const cur = stack.pop() as string;
-      if (seen.has(cur)) continue;
-      seen.add(cur);
-      const p = state.parents[cur];
-      if (!p) continue;
-      if (p.fatherId === meId || p.motherId === meId) return true;
-      if (p.fatherId) stack.push(p.fatherId);
-      if (p.motherId) stack.push(p.motherId);
-    }
-    return false;
-  };
+  /** 是否「我」的后代（沿 parents 上溯能碰到 meId）；实现统一在 lineage.ts */
+  const isMeDescendant = (id: string): boolean => isBloodDescendant(state, id, meId);
 
   const isSpouseOf = (id: string, personId: string) =>
     state.spouses.some(
@@ -632,10 +621,20 @@ export function layoutFamilyTree(
 ): TreeLayout {
   const filter = options.filter ?? "all";
   const maxDepth = options.maxDepth ?? 6;
-  const visible =
+  let visible =
     filter === "all" && maxDepth >= 99
       ? new Set(Object.keys(state.persons))
       : filterVisibleIds(state, filter, maxDepth);
+  if (options.wufu) {
+    const inWufu = new Set<string>();
+    for (const id of visible) {
+      // 「我」不对自己算服制（wufuOf 返回 null），必须始终保留
+      if (id === state.meId || options.wufu.get(id)?.grade !== "出服") {
+        inWufu.add(id);
+      }
+    }
+    visible = inWufu;
+  }
   const working =
     visible.size === Object.keys(state.persons).length
       ? state

@@ -1,5 +1,5 @@
 import { type FamilyState, type Person } from "./family";
-import { computeDistances, pedigreePath } from "./lineage";
+import { computeDistances, isBloodDescendant, pedigreePath } from "./lineage";
 
 /**
  * 亲属称谓 —— 浙江省三门县主流用法。
@@ -98,10 +98,45 @@ const GRAND_LATERAL_SPOUSE: Record<string, string> = {
   外姨婆: "外姨丈公",
 };
 
+/** 全图逐人算称谓时的共享上下文：距离表与血亲闭包各只算一次 */
+export interface KinshipContext {
+  distances?: Map<string, number | null>;
+  /** 与「我」经纯血亲边（parents 双向）连通的人，不含姻亲 */
+  blood?: Set<string>;
+}
+
+/** 血亲闭包：从 meId 沿 parents 边双向 BFS，不经过配偶边 */
+function bloodClosure(state: FamilyState, meId: string): Set<string> {
+  const blood = new Set<string>([meId]);
+  const queue = [meId];
+  while (queue.length > 0) {
+    const cur = queue.shift() as string;
+    const up = state.parents[cur];
+    for (const pid of [up?.fatherId, up?.motherId]) {
+      if (pid && state.persons[pid] && !blood.has(pid)) {
+        blood.add(pid);
+        queue.push(pid);
+      }
+    }
+    for (const [cid, entry] of Object.entries(state.parents)) {
+      if (
+        (entry.fatherId === cur || entry.motherId === cur) &&
+        state.persons[cid] &&
+        !blood.has(cid)
+      ) {
+        blood.add(cid);
+        queue.push(cid);
+      }
+    }
+  }
+  return blood;
+}
+
 export function kinshipTerm(
   state: FamilyState,
   personId: string,
-  meId: string | null
+  meId: string | null,
+  context?: KinshipContext
 ): string {
   if (!meId || !state.persons[meId] || !state.persons[personId]) return "亲属";
   if (personId === meId) return "我";
@@ -111,7 +146,7 @@ export function kinshipTerm(
   if (path && path.length > 0 && /^[FM]+$/.test(path)) {
     return ancestorTerm(path);
   }
-  return kinshipInner(state, personId, meId, me, person);
+  return kinshipInner(state, personId, meId, me, person, context);
 }
 
 function kinshipInner(
@@ -119,7 +154,8 @@ function kinshipInner(
   personId: string,
   meId: string,
   me: Person,
-  person: Person
+  person: Person,
+  context?: KinshipContext
 ): string {
   const mySpouses = spouseIdsOf(state, meId);
   const gMe = genderOf(me);
@@ -176,6 +212,37 @@ function kinshipInner(
     if (elder === true) return "大姑子";
     if (elder === false) return "小姑子";
     return "夫姐妹";
+  }
+
+  // ── 配偶的兄弟姐妹的子女：内侄/内侄女（配偶兄弟之子）、
+  // 妻甥/妻甥女（我的配偶的姐妹之子，女性用「我」时为夫甥/夫甥女）──
+  // 三跳姻亲，距离兜底曾把 d=1 的他们标成「子女」——必须显式成词。
+  for (const sid of mySpouses) {
+    const theirP = state.parents[personId];
+    if (!theirP) continue;
+    const hisParents = [theirP.fatherId, theirP.motherId].filter(Boolean) as string[];
+    for (const pid of hisParents) {
+      if (pid === sid || !shareParents(state, sid, pid)) continue;
+      const parent = state.persons[pid];
+      if (parent && genderOf(parent) === "male") {
+        return gP === "female" ? "内侄女" : "内侄";
+      }
+      if (gMe === "male") return gP === "female" ? "妻甥女" : "妻甥";
+      return gP === "female" ? "夫甥女" : "夫甥";
+    }
+  }
+
+  // ── 配偶与他人（或未登记「我」）的子女：继子 / 继女 ──
+  const theirOwnP = state.parents[personId];
+  if (theirOwnP) {
+    const hisOwnParents = [theirOwnP.fatherId, theirOwnP.motherId].filter(
+      Boolean
+    ) as string[];
+    for (const sid of mySpouses) {
+      if (hisOwnParents.includes(sid)) {
+        return gP === "female" ? "继女" : "继子";
+      }
+    }
   }
 
   // ── 配偶的兄弟姐妹的配偶：连襟（妻的姐妹的丈夫）/ 妯娌（夫的兄弟的妻子）──
@@ -365,13 +432,25 @@ function kinshipInner(
     }
   }
 
-  const d = computeDistances(state).get(personId);
+  // ── 兜底：混合 BFS 的 d 把「血亲连通」与「经配偶边连通」混在一起，
+  // 必须先分桶：血亲后代给世代称呼；其余血亲是远亲；非血亲是姻亲。
+  // 否则妻方旁系的子女（d=1）会被叫成「子女」。
+  const d = (context?.distances ?? computeDistances(state)).get(personId);
   if (d === null || d === undefined) return "亲属";
+  const blood = context?.blood ?? bloodClosure(state, meId);
+  if (isBloodDescendant(state, personId, meId)) {
+    if (d === 1) return "子女";
+    return d > 0 ? `${d} 世孙` : "晚辈";
+  }
+  if (blood.has(personId)) {
+    if (d <= -1) return "远亲长辈";
+    if (d === 0) return "远亲";
+    return "远亲晚辈";
+  }
+  if (d <= -2) return "姻亲长辈";
   if (d === -1) return "长辈";
-  if (d === 0) return "同辈";
-  if (d === 1) return "子女";
-  if (d < 0) return String(Math.abs(d)) + " 世祖";
-  return String(d) + " 世孙";
+  if (d === 0) return "姻亲同辈";
+  return "姻亲晚辈";
 }
 
 export function buildKinshipMap(
@@ -380,8 +459,14 @@ export function buildKinshipMap(
 ): Map<string, string> {
   const map = new Map<string, string>();
   if (!meId || !state.persons[meId]) return map;
+  // 距离表与血亲闭包全图各只算一次：
+  // 兜底分支曾每人重跑一遍全图 BFS，最坏 O(V³)，±10 代时不可接受
+  const context: KinshipContext = {
+    distances: computeDistances(state),
+    blood: bloodClosure(state, meId),
+  };
   for (const id of Object.keys(state.persons)) {
-    map.set(id, kinshipTerm(state, id, meId));
+    map.set(id, kinshipTerm(state, id, meId, context));
   }
   return map;
 }

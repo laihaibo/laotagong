@@ -85,6 +85,36 @@ export function pedigreeSortKey(path: string | null): string {
   return path.split("").map(function (ch) { return ch === "F" ? "0" : "1"; }).join("");
 }
 
+/**
+ * 是否「我」的血亲后代：从 personId 沿 parents 槽位**向上**走能碰到 meId。
+ *
+ * 后代判定绝不能用混合图 BFS 距离（computeDistances）——配偶边权重 0，
+ * 「我→老婆→岳父母→妻姐→妻姐的子女」算出来 d=+1，会被误判成我的后代。
+ * 必须看这条纯血亲链。
+ */
+export function isBloodDescendant(
+  state: FamilyState,
+  personId: string,
+  meId: string | null
+): boolean {
+  if (!meId || personId === meId || !state.persons[personId]) return false;
+  const stack = [personId];
+  const seen = new Set<string>([personId]);
+  while (stack.length > 0) {
+    const cur = stack.pop() as string;
+    const p = state.parents[cur];
+    if (!p) continue;
+    if (p.fatherId === meId || p.motherId === meId) return true;
+    for (const up of [p.fatherId, p.motherId]) {
+      if (up && state.persons[up] && !seen.has(up)) {
+        seen.add(up);
+        stack.push(up);
+      }
+    }
+  }
+  return false;
+}
+
 export function computeDistances(state: FamilyState): Map<string, number | null> {
   const distances = new Map<string, number | null>();
   for (const id of Object.keys(state.persons)) distances.set(id, null);
@@ -152,7 +182,7 @@ export function classifyLineage(
     }
     return "orphan";
   }
-  if (d >= 1) return "descendant";
+  if (d >= 1 && isBloodDescendant(state, personId, meId)) return "descendant";
   const my = state.parents[meId];
   const theirs = state.parents[personId];
   if (my && theirs) {
@@ -205,6 +235,18 @@ export function filterVisibleIds(
   for (const s of getSpouseIds(state, meId)) visible.add(s);
   const my = state.parents[meId];
 
+  // pedigreePath 在 filterVisibleIds 与 classifyLineage 里各查一次是重复 BFS；
+  // ±10 代人一多这里就是 O(V²)，按人缓存一份。
+  const pathCache = new Map<string, string | null>();
+  const pathOf = (id: string): string | null => {
+    let p = pathCache.get(id);
+    if (p === undefined) {
+      p = pedigreePath(state, id, meId);
+      pathCache.set(id, p);
+    }
+    return p;
+  };
+
   for (const id of ids) {
     const d = distances.get(id);
     const disconnected = d === null || d === undefined;
@@ -215,14 +257,19 @@ export function filterVisibleIds(
     }
     if (disconnected || Math.abs(d as number) > maxDepth) continue;
 
-    const path = pedigreePath(state, id, meId);
+    const path = pathOf(id);
     const lineage = classifyLineage(state, id, meId, distances);
 
     if (filter === "direct") {
       const directAncestor =
         (isPatrilinealPath(path) || isMatrilinealPath(path)) && (d as number) < 0;
       const isParents = Boolean(my && (id === my.fatherId || id === my.motherId));
-      if (id === meId || directAncestor || isParents || (d as number) >= 1) {
+      if (
+        id === meId ||
+        directAncestor ||
+        isParents ||
+        isBloodDescendant(state, id, meId)
+      ) {
         visible.add(id);
       }
       continue;
@@ -230,7 +277,7 @@ export function filterVisibleIds(
     if (filter === "paternal") {
       const keep =
         isPatrilinealPath(path) ||
-        (d as number) >= 1 ||
+        isBloodDescendant(state, id, meId) ||
         lineage === "sibling" ||
         lineage === "affinal" ||
         (lineage === "collateral" && collateralSide(state, id, meId) === "paternal");
@@ -241,7 +288,7 @@ export function filterVisibleIds(
     if (filter === "maternal") {
       const keep =
         isMatrilinealPath(path) ||
-        (d as number) >= 1 ||
+        isBloodDescendant(state, id, meId) ||
         lineage === "sibling" ||
         lineage === "affinal" ||
         (lineage === "collateral" && collateralSide(state, id, meId) === "maternal");

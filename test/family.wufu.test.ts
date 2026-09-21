@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildWufuMap,
   createPerson,
   wufuOf,
   zodiacOf,
@@ -126,6 +127,23 @@ describe("五服 · 姻亲与未连通", () => {
     const state = buildTree();
     state.meId = null;
     expect(wufuOf(state, "F")).toBeNull();
+  });
+});
+
+describe("五服 · 批量版与逐人版一致", () => {
+  it("buildWufuMap 与逐人 wufuOf 完全一致", () => {
+    const state = buildTree();
+    state.persons.STRANGER = createPerson({ id: "STRANGER", name: "路人" });
+    const batched = buildWufuMap(state);
+    for (const id of Object.keys(state.persons)) {
+      expect(batched.get(id) ?? null, id).toEqual(wufuOf(state, id));
+    }
+  });
+
+  it("没有「我」时批量版为空表", () => {
+    const state = buildTree();
+    state.meId = null;
+    expect(buildWufuMap(state).size).toBe(0);
   });
 });
 

@@ -11,7 +11,7 @@
 ```bash
 pnpm dev              # 开发服务器（Node ≥ 22，pnpm）
 pnpm build            # 静态导出到 out/
-pnpm test             # vitest + jsdom 全量（当前 167 个）
+pnpm test             # vitest + jsdom 全量（当前 166 个）
 pnpm test:watch
 npx tsc --noEmit      # 类型检查（package.json 无 typecheck 脚本）
 node scripts/check-contrast.mjs   # token 漂移守卫（不是对比度验收）
@@ -26,11 +26,11 @@ node scripts/check-contrast.mjs   # token 漂移守卫（不是对比度验收�
 ```
 app/            Next.js App Router；globals.css 是唯一设计 token 来源
 components/     family-tree.tsx（画布+防误触）、family-app.tsx（外壳+弹窗）、
-                tree-g6.tsx（G6 渲染引擎）、ui/（shadcn 风格）
+                ui/（shadcn 风格）
 lib/            纯函数层：family.ts（数据+关系算法+关系选项规则）、
-                tree.ts（布局+连线几何）、g6-scene.ts（自研几何→G6 数据）、
-                lineage.ts（亲系）、kinship.ts（称谓，含连襟/妯娌等多跳姻亲）、
-                layout-mode.ts（布局引擎持久化）、dev-sample.ts（开发示例数据）、
+                tree.ts（布局+连线几何）、lineage.ts（亲系+血亲后代判定）、
+                kinship.ts（称谓，含连襟/妯娌等多跳姻亲+兜底分桶）、
+                view-prefs.ts（画布显示偏好持久化）、dev-sample.ts（开发示例数据）、
                 theme.ts（自研主题）
 test/           vitest + jsdom；routes.geometry.test.ts 是连线几何守卫
 docs/screenshots/  README 用的真实截图（1440×860）
@@ -59,10 +59,13 @@ scripts/        check-contrast.mjs 之外都是一次性 codemod，勿执行
    （男不能加丈夫、女不能加妻子、已有槽位禁用）与默认性别（父/夫/子→男、
    母/妻/女→女）全部在 `lib/family.ts` 的 `relationOptions`；组件只消费。
    细分关系经 `relationBaseOf` 归约成三种边操作，`spouses` 仍只经 `addSpouseLink`。
-8. **双布局引擎共享同一几何**：G6 模式（`lib/g6-scene.ts`）调同一个
-   `layoutFamilyTree()`，preset 定位 + 自定义边渲染总线连线；**不要给 G6
-   喂 dagre 之类自动布局**（配偶边参与排秩会毁掉辈分行对齐）。
-   改 `lib/tree.ts` 几何两个引擎同时变，采样守卫同时守护两者。
+8. **单一渲染引擎，后代判定必须走血亲链**：G6 已移除（2026-09），
+   `lib/tree.ts` 的 `layoutFamilyTree()` 是唯一几何来源。**「是不是我的后代」
+   只能用 `lineage.ts` 的 `isBloodDescendant`（沿 parents 上溯）**；
+   绝不能用混合图 BFS 距离判定——`computeDistances` 把配偶边当权重 0，
+   「我→老婆→岳父母→妻姐→其子女」算出 d=+1，会冒充血亲后代
+   （这正是已修复的「父系视图冒出老婆姐姐的子女且标成子女」bug 的根因）。
+   改几何时 `routes.geometry.test.ts` 的采样守卫守着。
 9. **`public/laotagong-*.json` 是本机示例/个人数据，不进版本库**（.gitignore 已排除）；
    `lib/dev-sample.ts` 只在开发模式且本机存储为空时自动载入。
 
