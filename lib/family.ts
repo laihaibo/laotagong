@@ -1,3 +1,5 @@
+import { bfsDistances, buildGraphIndexes, shareAParent } from "./graph";
+
 export type Gender = "male" | "female" | "unknown";
 
 /** 添加关系时用户可选的六种细分关系 */
@@ -79,13 +81,6 @@ export function createEmptyState(): FamilyState {
 }
 
 /**
- * Person 的**唯一**字段清单。
- *
- * createPerson 与 sanitizeState 都必须经过它——分成两份清单是 P-1 的根因：
- * 写路径认识新字段、读路径不认识，于是 saveState 写进去、loadState 又丢掉，
- * 而构建与测试全绿，没有任何信号。
- */
-/**
  * 生成 id。
  *
  * `crypto.randomUUID()` **只在安全上下文存在**（https / localhost）。
@@ -117,6 +112,13 @@ export function normalizeEvent(raw: unknown): FamilyEvent | null {
   };
 }
 
+/**
+ * Person 的**唯一**字段清单。
+ *
+ * createPerson 与 sanitizeState 都必须经过它——分成两份清单是数据丢失的根因：
+ * 写路径认识新字段、读路径不认识，于是 saveState 写进去、loadState 又丢掉，
+ * 而构建与测试全绿，没有任何信号。新增字段只改这一处。
+ */
 export function normalizePerson(id: string, raw: unknown): Person {
   const p = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const now = Date.now();
@@ -221,13 +223,10 @@ export function getSiblingIds(state: FamilyState, personId: string): string[] {
   const parents = state.parents[personId];
   if (!parents?.fatherId && !parents?.motherId) return [];
   const result: string[] = [];
-  for (const [childId, p] of Object.entries(state.parents)) {
-    if (childId === personId) continue;
-    const shareFather =
-      parents.fatherId && p.fatherId === parents.fatherId;
-    const shareMother =
-      parents.motherId && p.motherId === parents.motherId;
-    if (shareFather || shareMother) result.push(childId);
+  for (const [childId] of Object.entries(state.parents)) {
+    if (childId !== personId && shareAParent(state, personId, childId)) {
+      result.push(childId);
+    }
   }
   return result;
 }
@@ -503,7 +502,9 @@ export function loadState(): FamilyState {
 export function saveState(state: FamilyState): boolean {
   if (typeof window === "undefined") return false;
   try {
-    window.localStorage.setItem(STORAGE_KEY, exportState(state));
+    // 存储路径用紧凑序列化：pretty-print 的体积翻倍，白吃 localStorage 配额。
+    // exportState 保持缩进——导出的文件是给人备份查看的。
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     return true;
   } catch {
     return false;
@@ -590,6 +591,28 @@ export function relationBaseOf(kind: RelationKind): RelationBase {
   if (kind === "son" || kind === "daughter") return "child";
   return kind;
 }
+
+/**
+ * 新建一个关系：把「边操作种类 + 焦点 + 新人物」映射成一个**纯函数**
+ * `FamilyState -> FamilyState`。
+ *
+ * 细分的六种关系（夫/妻/子/女）先经 `relationBaseOf` 归约到这四种边操作，
+ * 可用性规则统一在 `relationOptions` 里，组件只查表不散写。
+ * 注意 child 走 `linkChildWithParents`（子女挂本人为亲长，自动补唯一候选
+ * 的另一端），而不是裸写 parents——`addParentLink` 的唯一构造者地位不变。
+ */
+export const RELATION_APPLIERS: Record<
+  RelationBase,
+  (state: FamilyState, focusId: string, personId: string) => FamilyState
+> = {
+  father: (state, focusId, personId) =>
+    addParentLink(state, focusId, personId, "father"),
+  mother: (state, focusId, personId) =>
+    addParentLink(state, focusId, personId, "mother"),
+  spouse: (state, focusId, personId) => addSpouseLink(state, focusId, personId),
+  child: (state, focusId, personId) =>
+    linkChildWithParents(state, personId, focusId),
+};
 
 /**
  * 两位已知性别相同的人不可结为配偶——「男不能有丈夫、女不能有妻子」
@@ -696,53 +719,12 @@ export function applyRepairs(
  * 父/母 −1 · 配偶 0 · 子女 +1 · 与「我」不连通者为 null。
  *
  * 世代**不进 FamilyState**，此函数是唯一来源。
+ * 遍历实现在 `lib/graph.ts`（曾与 lineage.ts 的 computeDistances 各长一份）。
  */
 export function getRelationDistances(
   state: FamilyState
 ): Map<string, number | null> {
-  const distances = new Map<string, number | null>();
-  for (const id of Object.keys(state.persons)) distances.set(id, null);
-
-  const meId = state.meId;
-  if (!meId || !state.persons[meId]) return distances;
-
-  // 子女索引只建一次：getChildrenIds 每次全表扫 parents，
-  // BFS 里逐节点调用就是 O(V·P)，±10 代的大图上很伤
-  const childIndex = new Map<string, string[]>();
-  for (const [childId, entry] of Object.entries(state.parents)) {
-    for (const parentId of [entry.fatherId, entry.motherId]) {
-      if (!parentId) continue;
-      const list = childIndex.get(parentId);
-      if (list) list.push(childId);
-      else childIndex.set(parentId, [childId]);
-    }
-  }
-
-  const neighboursOf = (id: string): Array<[string, number]> => {
-    const out: Array<[string, number]> = [];
-    const p = state.parents[id];
-    if (p?.fatherId) out.push([p.fatherId, -1]);
-    if (p?.motherId) out.push([p.motherId, -1]);
-    for (const childId of childIndex.get(id) ?? []) out.push([childId, 1]);
-    for (const spouseId of getSpouseIds(state, id)) out.push([spouseId, 0]);
-    // 按 id 排序，保证遍历与结果确定（否则同输入不同插入序会产生不同分组）
-    return out.sort((x, y) => x[0].localeCompare(y[0]));
-  };
-
-  distances.set(meId, 0);
-  const queue: string[] = [meId];
-  while (queue.length > 0) {
-    const current = queue.shift() as string;
-    const base = distances.get(current);
-    if (base === null || base === undefined) continue;
-    for (const [neighbourId, weight] of neighboursOf(current)) {
-      if (distances.get(neighbourId) !== null) continue;
-      distances.set(neighbourId, base + weight);
-      queue.push(neighbourId);
-    }
-  }
-
-  return distances;
+  return bfsDistances(state, state.meId, buildGraphIndexes(state));
 }
 
 export interface DistanceGroup {

@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  addParentLink,
-  addSpouseLink,
+  RELATION_APPLIERS,
   createPerson,
-  linkChildWithParents,
   type FamilyState,
   type Gender,
   type Person,
@@ -31,19 +29,6 @@ function intersects(a: { x: number; y: number; width: number; height: number }, 
     a.y < b.y + b.height &&
     b.y < a.y + a.height
   );
-}
-
-/** 模拟 UI 的添加关系（与 family-app.tsx 的 RELATION_APPLIERS 一致） */
-function applyAdd(
-  state: FamilyState,
-  mode: "father" | "mother" | "spouse" | "child",
-  focusId: string,
-  personId: string
-): FamilyState {
-  if (mode === "father") return addParentLink(state, focusId, personId, "father");
-  if (mode === "mother") return addParentLink(state, focusId, personId, "mother");
-  if (mode === "spouse") return addSpouseLink(state, focusId, personId);
-  return linkChildWithParents(state, personId, focusId);
 }
 
 describe("模糊测试：连续添加家庭成员，每步都不得出现卡片相交", () => {
@@ -95,7 +80,8 @@ describe("模糊测试：连续添加家庭成员，每步都不得出现卡片�
         });
         state = { ...state, persons: { ...state.persons, [np.id]: np } };
         ids.push(np.id);
-        state = applyAdd(state, mode, focusId, np.id);
+        // 直接测 lib 的真实现，不再复刻组件里的映射（复刻会静默漂移）
+        state = RELATION_APPLIERS[mode](state, focusId, np.id);
         assertClean(op + 1, mode);
       }
       if (bad) failures.push(bad);

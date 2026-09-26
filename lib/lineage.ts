@@ -1,4 +1,9 @@
 import { type FamilyState, getSpouseIds } from "./family";
+import {
+  ancestorClosure,
+  bfsDistances,
+  buildGraphIndexes,
+} from "./graph";
 
 export type LineageKind =
   | "ego"
@@ -116,54 +121,84 @@ export function isBloodDescendant(
 }
 
 export function computeDistances(state: FamilyState): Map<string, number | null> {
-  const distances = new Map<string, number | null>();
-  for (const id of Object.keys(state.persons)) distances.set(id, null);
-  const meId = state.meId;
-  if (!meId || !state.persons[meId]) return distances;
-  distances.set(meId, 0);
-  const queue = [meId];
-  const neighbour = (id: string): Array<[string, number]> => {
-    const out: Array<[string, number]> = [];
-    const p = state.parents[id];
-    if (p?.fatherId) out.push([p.fatherId, -1]);
-    if (p?.motherId) out.push([p.motherId, -1]);
-    for (const [childId, entry] of Object.entries(state.parents)) {
-      if (entry.fatherId === id || entry.motherId === id) out.push([childId, 1]);
-    }
-    for (const s of getSpouseIds(state, id)) out.push([s, 0]);
-    return out.sort((a, b) => a[0].localeCompare(b[0]));
-  };
-  while (queue.length > 0) {
-    const cur = queue.shift() as string;
-    const base = distances.get(cur);
-    if (base === null || base === undefined) continue;
-    for (const [nid, w] of neighbour(cur)) {
-      if (distances.get(nid) !== null) continue;
-      distances.set(nid, base + w);
-      queue.push(nid);
-    }
+  // 与 family.ts 的 getRelationDistances 共用同一份 BFS（lib/graph.ts）——
+  // 这里曾是一份没建子女索引的孪生副本，逐节点全表扫 parents，O(V²)
+  return bfsDistances(state, state.meId, buildGraphIndexes(state));
+}
+
+/**
+ * 一次布局/筛选内共享的派生数据。
+ *
+ * classifyLineage / collateralSide / sharesCommonAncestor / filterVisibleIds
+ * 逐人调用时各自内部都要跑 BFS（谱系路径、祖先闭包、血亲后代判定），
+ * 每人 O(V)、全体 O(V²)。把这几样放进一个按人缓存的上下文贯穿全布局，
+ * 就从「每人重跑」变成「全图一次」。全部字段可选，缺哪个现算哪个，
+ * 不传上下文的行为与旧版逐位一致。
+ */
+export interface LineageContext {
+  distances?: Map<string, number | null>;
+  /** pedigreePath 结果按人缓存 */
+  paths?: Map<string, string | null>;
+  /** 原点（通常是 meId）的全部血亲后代，isBloodDescendant 的 O(1) 查询版 */
+  descendants?: Set<string>;
+  /** 祖先集合（含本人）按人缓存 */
+  ancestors?: Map<string, Set<string>>;
+}
+
+/** 兼容旧调用：第 4 参既可以是裸距离表，也可以是完整上下文 */
+function normalizeContext(
+  input?: Map<string, number | null> | LineageContext
+): LineageContext {
+  if (!input) return {};
+  if (input instanceof Map) return { distances: input };
+  return input;
+}
+
+function pathOf(
+  state: FamilyState,
+  personId: string,
+  meId: string,
+  context: LineageContext
+): string | null {
+  const cache = context.paths;
+  if (!cache) return pedigreePath(state, personId, meId);
+  let p = cache.get(personId);
+  if (p === undefined) {
+    p = pedigreePath(state, personId, meId);
+    cache.set(personId, p);
   }
-  return distances;
+  return p;
+}
+
+function isDescendantOfMe(
+  state: FamilyState,
+  personId: string,
+  meId: string,
+  context: LineageContext
+): boolean {
+  if (context.descendants) return context.descendants.has(personId);
+  return isBloodDescendant(state, personId, meId);
 }
 
 export function classifyLineage(
   state: FamilyState,
   personId: string,
   meId: string | null,
-  distances?: Map<string, number | null>
+  distancesOrContext?: Map<string, number | null> | LineageContext
 ): LineageKind {
   if (!meId || !state.persons[meId] || !state.persons[personId]) return "orphan";
   if (personId === meId) return "ego";
-  const path = pedigreePath(state, personId, meId);
+  const context = normalizeContext(distancesOrContext);
+  const path = pathOf(state, personId, meId, context);
   if (isPatrilinealPath(path)) return "paternal";
   if (isMatrilinealPath(path)) return "maternal";
   if (isAncestorPath(path)) return path!.charAt(0) === "F" ? "paternal" : "maternal";
 
-  const dist = distances || computeDistances(state);
+  const dist = context.distances ?? computeDistances(state);
   const d = dist.get(personId);
   // 与「我」不连通的人不可能有共同祖先（纯血亲边都是混合图的边）
   if (d === null || d === undefined) return "orphan";
-  if (d >= 1 && isBloodDescendant(state, personId, meId)) return "descendant";
+  if (d >= 1 && isDescendantOfMe(state, personId, meId, context)) return "descendant";
   const my = state.parents[meId];
   const theirs = state.parents[personId];
   if (my && theirs) {
@@ -175,7 +210,7 @@ export function classifyLineage(
   // 旁系：与我有共同祖先的其余血亲——伯叔姑舅姨、堂表兄弟、侄甥、
   // 伯公祖与远房等都算。只认「与父母共父母」一级会让堂表亲掉进
   // orphan，画布上既没有亲系色、布局排序也被甩到最右边。
-  if (sharesCommonAncestor(state, personId, meId)) return "collateral";
+  if (sharesCommonAncestor(state, personId, meId, context)) return "collateral";
   return "orphan";
 }
 
@@ -183,51 +218,50 @@ export function classifyLineage(
 export function sharesCommonAncestor(
   state: FamilyState,
   personId: string,
-  meId: string | null
+  meId: string | null,
+  context?: LineageContext
 ): boolean {
   if (!meId || !state.persons[meId] || !state.persons[personId]) return false;
-  const mine = ancestorSetWithSelf(state, meId);
-  const theirs = ancestorSetWithSelf(state, personId);
+  const mine = ancestorSetWithSelf(state, meId, context?.ancestors);
+  const theirs = ancestorSetWithSelf(state, personId, context?.ancestors);
   for (const id of theirs) {
     if (mine.has(id)) return true;
   }
   return false;
 }
 
-function ancestorSetWithSelf(state: FamilyState, id: string): Set<string> {
-  const seen = new Set<string>([id]);
-  const stack = [id];
-  while (stack.length > 0) {
-    const cur = stack.pop() as string;
-    const p = state.parents[cur];
-    for (const up of [p?.fatherId, p?.motherId]) {
-      if (up && state.persons[up] && !seen.has(up)) {
-        seen.add(up);
-        stack.push(up);
-      }
-    }
-  }
+function ancestorSetWithSelf(
+  state: FamilyState,
+  id: string,
+  cache?: Map<string, Set<string>>
+): Set<string> {
+  const cached = cache?.get(id);
+  if (cached) return cached;
+  // 遍历核心统一在 lib/graph.ts；这里只负责按上下文缓存
+  const seen = ancestorClosure(state, id);
+  cache?.set(id, seen);
   return seen;
 }
 
 export function collateralSide(
   state: FamilyState,
   personId: string,
-  meId: string | null
+  meId: string | null,
+  context?: LineageContext
 ): "paternal" | "maternal" | "other" {
   if (!meId) return "other";
   const meParents = state.parents[meId];
   if (!meParents) return "other";
   // 先看共同祖先落在父系链还是母系链：姑姑的孩子（共同祖先=爷爷）
   // 算父系，姨妈的孩子（共同祖先=外公）算母系。一级旁系的老判定自然被覆盖。
-  const theirs = ancestorSetWithSelf(state, personId);
+  const theirs = ancestorSetWithSelf(state, personId, context?.ancestors);
   if (meParents.fatherId) {
-    for (const id of ancestorSetWithSelf(state, meParents.fatherId)) {
+    for (const id of ancestorSetWithSelf(state, meParents.fatherId, context?.ancestors)) {
       if (theirs.has(id)) return "paternal";
     }
   }
   if (meParents.motherId) {
-    for (const id of ancestorSetWithSelf(state, meParents.motherId)) {
+    for (const id of ancestorSetWithSelf(state, meParents.motherId, context?.ancestors)) {
       if (theirs.has(id)) return "maternal";
     }
   }
@@ -237,7 +271,8 @@ export function collateralSide(
 export function filterVisibleIds(
   state: FamilyState,
   filter: LineageFilter,
-  maxDepth: number
+  maxDepth: number,
+  sharedContext?: LineageContext
 ): Set<string> {
   const ids = Object.keys(state.persons);
   const meId = state.meId;
@@ -246,22 +281,13 @@ export function filterVisibleIds(
     for (const id of ids) visible.add(id);
     return visible;
   }
-  const distances = computeDistances(state);
+  const context: LineageContext = { ...normalizeContext(sharedContext) };
+  if (!context.distances) context.distances = computeDistances(state);
+  if (!context.paths) context.paths = new Map();
+  const distances = context.distances;
   visible.add(meId);
   for (const s of getSpouseIds(state, meId)) visible.add(s);
   const my = state.parents[meId];
-
-  // pedigreePath 在 filterVisibleIds 与 classifyLineage 里各查一次是重复 BFS；
-  // ±10 代人一多这里就是 O(V²)，按人缓存一份。
-  const pathCache = new Map<string, string | null>();
-  const pathOf = (id: string): string | null => {
-    let p = pathCache.get(id);
-    if (p === undefined) {
-      p = pedigreePath(state, id, meId);
-      pathCache.set(id, p);
-    }
-    return p;
-  };
 
   for (const id of ids) {
     const d = distances.get(id);
@@ -273,8 +299,8 @@ export function filterVisibleIds(
     }
     if (disconnected || Math.abs(d as number) > maxDepth) continue;
 
-    const path = pathOf(id);
-    const lineage = classifyLineage(state, id, meId, distances);
+    const path = pathOf(state, id, meId, context);
+    const lineage = classifyLineage(state, id, meId, context);
 
     if (filter === "direct") {
       const directAncestor =
@@ -284,7 +310,7 @@ export function filterVisibleIds(
         id === meId ||
         directAncestor ||
         isParents ||
-        isBloodDescendant(state, id, meId)
+        isDescendantOfMe(state, id, meId, context)
       ) {
         visible.add(id);
       }
@@ -293,10 +319,10 @@ export function filterVisibleIds(
     if (filter === "paternal") {
       const keep =
         isPatrilinealPath(path) ||
-        isBloodDescendant(state, id, meId) ||
+        isDescendantOfMe(state, id, meId, context) ||
         lineage === "sibling" ||
         lineage === "affinal" ||
-        (lineage === "collateral" && collateralSide(state, id, meId) === "paternal");
+        (lineage === "collateral" && collateralSide(state, id, meId, context) === "paternal");
       if (keep) visible.add(id);
       if (my && id === my.fatherId && my.motherId) visible.add(my.motherId);
       continue;
@@ -304,10 +330,10 @@ export function filterVisibleIds(
     if (filter === "maternal") {
       const keep =
         isMatrilinealPath(path) ||
-        isBloodDescendant(state, id, meId) ||
+        isDescendantOfMe(state, id, meId, context) ||
         lineage === "sibling" ||
         lineage === "affinal" ||
-        (lineage === "collateral" && collateralSide(state, id, meId) === "maternal");
+        (lineage === "collateral" && collateralSide(state, id, meId, context) === "maternal");
       if (keep) visible.add(id);
       if (my && id === my.motherId && my.fatherId) visible.add(my.fatherId);
     }

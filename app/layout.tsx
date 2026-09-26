@@ -14,8 +14,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // 不再禁用双指缩放（WCAG 1.4.4）：低视力用户必须能放大页面。
+  // 画布自带捏合手势（touch-action: none），页面级缩放与它互不干扰。
   viewportFit: "cover",
   themeColor: "#eef2f7",
 };

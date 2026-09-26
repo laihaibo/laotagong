@@ -1,5 +1,6 @@
-import { type FamilyState, type Person } from "./family";
-import { computeDistances, isBloodDescendant, pedigreePath } from "./lineage";
+import { type FamilyState, type Person, areSpouses, getChildrenIds, getSpouseIds } from "./family";
+import { type ChildIndex, bfsDistances, buildChildIndex, buildGraphIndexes, shareAParent } from "./graph";
+import { isBloodDescendant, pedigreePath } from "./lineage";
 
 /**
  * 亲属称谓 —— 浙江省三门县主流用法。
@@ -27,32 +28,9 @@ function isElder(a: Person | undefined, b: Person | undefined): boolean | null {
   if (!ya || !yb) return null;
   return ya < yb;
 }
-function isSpouse(state: FamilyState, meId: string, personId: string): boolean {
-  return state.spouses.some(
-    (s) => (s.a === meId && s.b === personId) || (s.b === meId && s.a === personId)
-  );
-}
-function spouseIdsOf(state: FamilyState, id: string): string[] {
-  return state.spouses
-    .filter((s) => s.a === id || s.b === id)
-    .map((s) => (s.a === id ? s.b : s.a));
-}
-function childIdsOf(state: FamilyState, id: string): string[] {
-  const out: string[] = [];
-  for (const [cid, p] of Object.entries(state.parents)) {
-    if (p.fatherId === id || p.motherId === id) out.push(cid);
-  }
-  return out;
-}
-function shareParents(state: FamilyState, a: string, b: string): boolean {
-  const pa = state.parents[a];
-  const pb = state.parents[b];
-  if (!pa || !pb) return false;
-  return Boolean(
-    (pa.fatherId && pa.fatherId === pb.fatherId) ||
-      (pa.motherId && pa.motherId === pb.motherId)
-  );
-}
+// 配偶/子女/共享父母的查询不再各写一份：统一走 family.ts 的
+// areSpouses/getSpouseIds/getChildrenIds 与 graph.ts 的 shareAParent。
+//（原文件里各有一份私有复制品，是归一前的历史欠账。）
 
 /** 直系尊亲属：爸爸妈妈 → 爷爷奶奶外公外婆 → (外)太公太婆 → (外)老太公太婆 → N世祖 */
 export function ancestorTerm(path: string): string {
@@ -106,11 +84,17 @@ export interface KinshipContext {
 }
 
 /** 血亲闭包：从 meId 沿 parents 边双向 BFS，不经过配偶边 */
-function bloodClosure(state: FamilyState, meId: string): Set<string> {
+function bloodClosure(
+  state: FamilyState,
+  meId: string,
+  childIndex?: ChildIndex
+): Set<string> {
   const blood = new Set<string>([meId]);
-  const queue = [meId];
-  while (queue.length > 0) {
-    const cur = queue.shift() as string;
+  const queue: string[] = [meId];
+  let head = 0;
+  while (head < queue.length) {
+    const cur = queue[head];
+    head += 1;
     const up = state.parents[cur];
     for (const pid of [up?.fatherId, up?.motherId]) {
       if (pid && state.persons[pid] && !blood.has(pid)) {
@@ -118,12 +102,9 @@ function bloodClosure(state: FamilyState, meId: string): Set<string> {
         queue.push(pid);
       }
     }
-    for (const [cid, entry] of Object.entries(state.parents)) {
-      if (
-        (entry.fatherId === cur || entry.motherId === cur) &&
-        state.persons[cid] &&
-        !blood.has(cid)
-      ) {
+    // 向下走子女索引；曾逐节点全表扫 parents，O(V²)
+    for (const cid of childIndex?.get(cur) ?? []) {
+      if (state.persons[cid] && !blood.has(cid)) {
         blood.add(cid);
         queue.push(cid);
       }
@@ -149,26 +130,35 @@ export function kinshipTerm(
   return kinshipInner(state, personId, meId, me, person, context);
 }
 
-function kinshipInner(
-  state: FamilyState,
-  personId: string,
-  meId: string,
-  me: Person,
-  person: Person,
-  context?: KinshipContext
-): string {
-  const mySpouses = spouseIdsOf(state, meId);
-  const gMe = genderOf(me);
-  const gP = genderOf(person);
-  const myP = state.parents[meId];
+/** kinshipInner 各分段共享的已推导局部量，避免每段重复求解 */
+interface KinshipVars {
+  state: FamilyState;
+  personId: string;
+  meId: string;
+  me: Person;
+  person: Person;
+  gMe: Person["gender"];
+  gP: Person["gender"];
+  myP?: { fatherId?: string; motherId?: string };
+  hisP?: { fatherId?: string; motherId?: string };
+  mySpouses: string[];
+  myKids: string[];
+  parentsOfMe: string[];
+}
 
-  if (isSpouse(state, meId, personId)) {
+/** 每段返回称谓词；null = 本段规则不适用，交给下一段 */
+type KinshipRule = (v: KinshipVars) => string | null;
+
+/** 配偶与一重姻亲：配偶 → 子女 → 子女配偶 → 配偶父母 → 配偶同胞 →
+ *  其子女（内侄/妻甥）→ 继子女 → 连襟/妯娌 */
+const spouseAndInLawTerms: KinshipRule = (v) => {
+  const { state, personId, meId, me, person, gMe, gP, mySpouses, myKids } = v;
+  if (areSpouses(state, meId, personId)) {
     if (gMe === "female" && gP === "male") return "丈夫";
     if (gMe === "male" && gP === "female") return "妻子";
     return "配偶";
   }
 
-  const myKids = childIdsOf(state, meId);
   if (myKids.includes(personId)) {
     if (gP === "male") return "儿子";
     if (gP === "female") return "女儿";
@@ -176,7 +166,7 @@ function kinshipInner(
   }
 
   for (const kidId of myKids) {
-    if (isSpouse(state, kidId, personId)) {
+    if (areSpouses(state, kidId, personId)) {
       const kid = state.persons[kidId];
       if (genderOf(kid) === "male" && gP === "female") return "儿媳";
       if (genderOf(kid) === "female" && gP === "male") return "女婿";
@@ -192,7 +182,7 @@ function kinshipInner(
   }
 
   for (const sid of mySpouses) {
-    if (!shareParents(state, sid, personId)) continue;
+    if (!shareAParent(state, sid, personId)) continue;
     const elder = isElder(person, state.persons[sid]);
     if (gMe === "male") {
       if (gP === "male") {
@@ -222,7 +212,7 @@ function kinshipInner(
     if (!theirP) continue;
     const hisParents = [theirP.fatherId, theirP.motherId].filter(Boolean) as string[];
     for (const pid of hisParents) {
-      if (pid === sid || !shareParents(state, sid, pid)) continue;
+      if (pid === sid || !shareAParent(state, sid, pid)) continue;
       const parent = state.persons[pid];
       if (parent && genderOf(parent) === "male") {
         return gP === "female" ? "内侄女" : "内侄";
@@ -251,14 +241,19 @@ function kinshipInner(
   for (const sid of mySpouses) {
     for (const otherId of Object.keys(state.persons)) {
       if (otherId === meId || otherId === sid || otherId === personId) continue;
-      if (!shareParents(state, sid, otherId)) continue;
-      if (!isSpouse(state, otherId, personId)) continue;
+      if (!shareAParent(state, sid, otherId)) continue;
+      if (!areSpouses(state, otherId, personId)) continue;
       return gMe === "female" ? "妯娌" : "连襟";
     }
   }
 
-  const hisP = state.parents[personId];
-  if (myP && hisP && shareParents(state, meId, personId)) {
+  return null;
+};
+
+/** 同胞与同胞的配偶：哥哥弟弟姐姐妹妹 → 嫂子弟媳姐夫妹夫 */
+const siblingTerms: KinshipRule = (v) => {
+  const { state, personId, meId, me, person, gP, myP } = v;
+  if (myP && shareAParent(state, meId, personId)) {
     const elder = isElder(person, me);
     if (gP === "male") return elder === true ? "哥哥" : elder === false ? "弟弟" : "兄弟";
     if (gP === "female") return elder === true ? "姐姐" : elder === false ? "妹妹" : "姐妹";
@@ -267,8 +262,8 @@ function kinshipInner(
 
   for (const sibId of Object.keys(state.persons)) {
     if (sibId === meId || sibId === personId) continue;
-    if (!isSpouse(state, sibId, personId)) continue;
-    if (!myP || !shareParents(state, meId, sibId)) continue;
+    if (!areSpouses(state, sibId, personId)) continue;
+    if (!myP || !shareAParent(state, meId, sibId)) continue;
     const sib = state.persons[sibId];
     const sibMale = genderOf(sib) === "male";
     const elder = isElder(sib, me);
@@ -279,11 +274,14 @@ function kinshipInner(
       return elder === true ? "姐夫" : elder === false ? "妹夫" : "姐妹配偶";
     }
   }
+  return null;
+};
 
-  // ── 父母的兄弟姐妹：伯伯 / 叔叔 / 姑姑 / 舅舅 / 阿姨 ──
-  const parentsOfMe = [myP?.fatherId, myP?.motherId].filter(Boolean) as string[];
+/** 父母的兄弟姐妹（伯叔姑舅姨）及其配偶（伯母婶婶姑丈舅妈姨丈） */
+const parentSideTerms: KinshipRule = (v) => {
+  const { state, personId, meId, person, gP, myP, parentsOfMe } = v;
   for (const parentId of parentsOfMe) {
-    if (!shareParents(state, parentId, personId)) continue;
+    if (!shareAParent(state, parentId, personId)) continue;
     const viaFather = parentId === myP?.fatherId;
     if (viaFather) {
       if (gP === "male") {
@@ -295,19 +293,18 @@ function kinshipInner(
     return gP === "male" ? "舅舅" : "阿姨";
   }
 
-  // ── 父母兄弟姐妹的配偶：伯母 / 婶婶 / 姑丈 / 舅妈 / 姨丈 ──
   if (myP) {
     for (const sid of Object.keys(state.persons)) {
       if (sid === meId || sid === personId) continue;
       const viaFather =
-        myP.fatherId && sid !== myP.fatherId && shareParents(state, sid, myP.fatherId);
+        myP.fatherId && sid !== myP.fatherId && shareAParent(state, sid, myP.fatherId);
       const viaMother =
         !viaFather &&
         myP.motherId !== undefined &&
         sid !== myP.motherId &&
-        shareParents(state, sid, myP.motherId);
+        shareAParent(state, sid, myP.motherId);
       if (!viaFather && !viaMother) continue;
-      if (!isSpouse(state, sid, personId)) continue;
+      if (!areSpouses(state, sid, personId)) continue;
       const sib = state.persons[sid];
       const sibMale = genderOf(sib) === "male";
       if (viaFather) {
@@ -320,78 +317,87 @@ function kinshipInner(
       return sibMale ? "舅妈" : "姨丈";
     }
   }
+  return null;
+};
 
-  // ── 祖辈旁系：伯公 / 叔公 / 姑婆 / 舅公 / 姨婆（含外姓外前缀）及其配偶 ──
-  if (myP) {
-    const gps: Array<{ gid: string; maternal: boolean; g: Person["gender"] }> = [];
-    const fatherP = myP.fatherId ? state.parents[myP.fatherId] : undefined;
-    if (fatherP?.fatherId) {
-      gps.push({
-        gid: fatherP.fatherId,
-        maternal: false,
-        g: genderOf(state.persons[fatherP.fatherId]),
-      });
-    }
-    if (fatherP?.motherId) {
-      gps.push({
-        gid: fatherP.motherId,
-        maternal: false,
-        g: genderOf(state.persons[fatherP.motherId]),
-      });
-    }
-    const motherP = myP.motherId ? state.parents[myP.motherId] : undefined;
-    if (motherP?.fatherId) {
-      gps.push({
-        gid: motherP.fatherId,
-        maternal: true,
-        g: genderOf(state.persons[motherP.fatherId]),
-      });
-    }
-    if (motherP?.motherId) {
-      gps.push({
-        gid: motherP.motherId,
-        maternal: true,
-        g: genderOf(state.persons[motherP.motherId]),
-      });
-    }
-    const grandLateral = new Map<string, string>();
-    for (const sid of Object.keys(state.persons)) {
-      if (sid === meId) continue;
-      for (const { gid, maternal, g } of gps) {
-        if (sid === gid || !shareParents(state, gid, sid)) continue;
-        const wai = maternal ? "外" : "";
-        const gS = genderOf(state.persons[sid]);
-        const elder = isElder(state.persons[sid], state.persons[gid]);
-        let term: string;
-        if (g === "female") {
-          // 奶奶/外婆的兄弟 = 舅公，姐妹 = 姨婆；性别未知默认男分支
-          term = gS === "female" ? wai + "姨婆" : wai + "舅公";
-        } else if (gS === "female") {
-          // 爷爷/外公的姐妹 = 姑婆
-          term = wai + "姑婆";
-        } else {
-          // 爷爷/外公的兄弟：称大不称小
-          term = elder === false ? wai + "叔公" : wai + "伯公";
-        }
-        grandLateral.set(sid, term);
-        break;
+/** 祖辈旁系：伯公/叔公/姑婆/舅公/姨婆（含「外」前缀）及其配偶 */
+const grandLateralTerms: KinshipRule = (v) => {
+  const { state, personId, meId, myP } = v;
+  if (!myP) return null;
+  const gps: Array<{ gid: string; maternal: boolean; g: Person["gender"] }> = [];
+  const fatherP = myP.fatherId ? state.parents[myP.fatherId] : undefined;
+  if (fatherP?.fatherId) {
+    gps.push({
+      gid: fatherP.fatherId,
+      maternal: false,
+      g: genderOf(state.persons[fatherP.fatherId]),
+    });
+  }
+  if (fatherP?.motherId) {
+    gps.push({
+      gid: fatherP.motherId,
+      maternal: false,
+      g: genderOf(state.persons[fatherP.motherId]),
+    });
+  }
+  const motherP = myP.motherId ? state.parents[myP.motherId] : undefined;
+  if (motherP?.fatherId) {
+    gps.push({
+      gid: motherP.fatherId,
+      maternal: true,
+      g: genderOf(state.persons[motherP.fatherId]),
+    });
+  }
+  if (motherP?.motherId) {
+    gps.push({
+      gid: motherP.motherId,
+      maternal: true,
+      g: genderOf(state.persons[motherP.motherId]),
+    });
+  }
+  const grandLateral = new Map<string, string>();
+  for (const sid of Object.keys(state.persons)) {
+    if (sid === meId) continue;
+    for (const { gid, maternal, g } of gps) {
+      if (sid === gid || !shareAParent(state, gid, sid)) continue;
+      const wai = maternal ? "外" : "";
+      const gS = genderOf(state.persons[sid]);
+      const elder = isElder(state.persons[sid], state.persons[gid]);
+      let term: string;
+      if (g === "female") {
+        // 奶奶/外婆的兄弟 = 舅公，姐妹 = 姨婆；性别未知默认男分支
+        term = gS === "female" ? wai + "姨婆" : wai + "舅公";
+      } else if (gS === "female") {
+        // 爷爷/外公的姐妹 = 姑婆
+        term = wai + "姑婆";
+      } else {
+        // 爷爷/外公的兄弟：称大不称小
+        term = elder === false ? wai + "叔公" : wai + "伯公";
       }
-    }
-    if (grandLateral.has(personId)) {
-      return grandLateral.get(personId)!;
-    }
-    for (const [xId, xTerm] of grandLateral) {
-      if (isSpouse(state, xId, personId)) {
-        const spouseTerm = GRAND_LATERAL_SPOUSE[xTerm];
-        if (spouseTerm) return spouseTerm;
-      }
+      grandLateral.set(sid, term);
+      break;
     }
   }
+  if (grandLateral.has(personId)) {
+    return grandLateral.get(personId)!;
+  }
+  for (const [xId, xTerm] of grandLateral) {
+    if (areSpouses(state, xId, personId)) {
+      const spouseTerm = GRAND_LATERAL_SPOUSE[xTerm];
+      if (spouseTerm) return spouseTerm;
+    }
+  }
+  return null;
+};
+
+/** 晚辈旁系：侄甥 → 堂表 → 孙辈 → 亲家 */
+const descendantLateralTerms: KinshipRule = (v) => {
+  const { state, personId, meId, gMe, gP, myP, myKids, parentsOfMe, hisP } = v;
 
   for (const [cid, entry] of Object.entries(state.parents)) {
     const pids = [entry.fatherId, entry.motherId].filter(Boolean) as string[];
     if (!pids.includes(personId)) continue;
-    if (!myP || !shareParents(state, meId, cid)) continue;
+    if (!myP || !shareAParent(state, meId, cid)) continue;
     const childG = genderOf(state.persons[cid]);
     if (gMe === "male") return childG === "female" ? "侄女" : "侄子";
     return childG === "female" ? "外甥女" : "外甥";
@@ -401,7 +407,7 @@ function kinshipInner(
     const hisParents = [hisP.fatherId, hisP.motherId].filter(Boolean) as string[];
     for (const mid of parentsOfMe) {
       for (const pid of hisParents) {
-        if (!pid || !shareParents(state, mid, pid)) continue;
+        if (!pid || !shareAParent(state, mid, pid)) continue;
         const fatherSide = mid === myP?.fatherId || pid === myP?.fatherId;
         const prefix = fatherSide ? "堂" : "表";
         if (gP === "male") return prefix + "兄弟";
@@ -423,7 +429,7 @@ function kinshipInner(
   }
 
   for (const kidId of myKids) {
-    for (const kSp of spouseIdsOf(state, kidId)) {
+    for (const kSp of getSpouseIds(state, kidId)) {
       const kp = state.parents[kSp];
       if (!kp) continue;
       if (kp.fatherId === personId || kp.motherId === personId) {
@@ -431,11 +437,48 @@ function kinshipInner(
       }
     }
   }
+  return null;
+};
+
+function kinshipInner(
+  state: FamilyState,
+  personId: string,
+  meId: string,
+  me: Person,
+  person: Person,
+  context?: KinshipContext
+): string {
+  const myP = state.parents[meId];
+  const v: KinshipVars = {
+    state,
+    personId,
+    meId,
+    me,
+    person,
+    gMe: genderOf(me),
+    gP: genderOf(person),
+    myP,
+    hisP: state.parents[personId],
+    mySpouses: getSpouseIds(state, meId),
+    myKids: getChildrenIds(state, meId),
+    parentsOfMe: [myP?.fatherId, myP?.motherId].filter(Boolean) as string[],
+  };
+
+  // 分段按原规则顺序短路：第一段给出称谓即返回
+  const term =
+    spouseAndInLawTerms(v) ??
+    siblingTerms(v) ??
+    parentSideTerms(v) ??
+    grandLateralTerms(v) ??
+    descendantLateralTerms(v);
+  if (term) return term;
 
   // ── 兜底：混合 BFS 的 d 把「血亲连通」与「经配偶边连通」混在一起，
   // 必须先分桶：血亲后代给世代称呼；其余血亲是远亲；非血亲是姻亲。
   // 否则妻方旁系的子女（d=1）会被叫成「子女」。
-  const d = (context?.distances ?? computeDistances(state)).get(personId);
+  const d = (
+    context?.distances ?? bfsDistances(state, meId, buildGraphIndexes(state))
+  ).get(personId);
   if (d === null || d === undefined) return "亲属";
   const blood = context?.blood ?? bloodClosure(state, meId);
   if (isBloodDescendant(state, personId, meId)) {
@@ -462,8 +505,8 @@ export function buildKinshipMap(
   // 距离表与血亲闭包全图各只算一次：
   // 兜底分支曾每人重跑一遍全图 BFS，最坏 O(V³)，±10 代时不可接受
   const context: KinshipContext = {
-    distances: computeDistances(state),
-    blood: bloodClosure(state, meId),
+    distances: bfsDistances(state, meId, buildGraphIndexes(state)),
+    blood: bloodClosure(state, meId, buildChildIndex(state)),
   };
   for (const id of Object.keys(state.persons)) {
     map.set(id, kinshipTerm(state, id, meId, context));

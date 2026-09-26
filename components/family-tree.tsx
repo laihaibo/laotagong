@@ -20,6 +20,7 @@ import {
 
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
+import { PillToggle } from "@/components/ui/pill-toggle";
 import {
   type FamilyState,
   type Person,
@@ -84,10 +85,12 @@ interface View {
 const clamp = (v: number, min: number, max: number) =>
   Math.min(max, Math.max(min, v));
 
-export function FamilyTree({
+export const FamilyTree = memo(function FamilyTree({
   state,
   focusId,
   showMinimap = true,
+  kinship: kinshipProp,
+  wufu: wufuProp,
   onOpenPerson,
   onAddRelation,
   onSetMe,
@@ -96,6 +99,9 @@ export function FamilyTree({
   focusId: string | null;
   /** 小地图显隐由「设置」弹窗控制（family-app 持久化到 view-prefs） */
   showMinimap?: boolean;
+  /** 全图派生数据由 family-app 一次算好下传；不传时内部现算（独立使用/测试） */
+  kinship?: Map<string, string>;
+  wufu?: Map<string, WufuResult>;
   onOpenPerson: (id: string) => void;
   onAddRelation: (id: string) => void;
   onSetMe: (id: string) => void;
@@ -106,7 +112,7 @@ export function FamilyTree({
   /** 拖拽/捏合进行中：期间关掉卡片位置过渡，避免布局过渡和平移打架 */
   const [gesturing, setGesturing] = useState(false);
 
-  const wufu = useMemo(() => buildWufuMap(state), [state]);
+  const wufu = useMemo(() => wufuProp ?? buildWufuMap(state), [wufuProp, state]);
   const layout = useMemo(
     () =>
       layoutFamilyTree(state, {
@@ -116,7 +122,10 @@ export function FamilyTree({
       }),
     [state, filter, maxDepth, onlyWufu, wufu]
   );
-  const kinship = useMemo(() => buildKinshipMap(state, state.meId), [state]);
+  const kinship = useMemo(
+    () => kinshipProp ?? buildKinshipMap(state, state.meId),
+    [kinshipProp, state]
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 });
   /** 动画/惯性需要的最新 view；updater 必须是纯函数，所以别在 updater 里读它 */
@@ -125,6 +134,7 @@ export function FamilyTree({
 
   const flyRaf = useRef<number | null>(null);
   const momentumRaf = useRef<number | null>(null);
+  const savePrefsTimer = useRef<number | null>(null);
   const stopFly = () => {
     if (flyRaf.current !== null) {
       cancelAnimationFrame(flyRaf.current);
@@ -170,6 +180,7 @@ export function FamilyTree({
     () => () => {
       stopFly();
       stopMomentum();
+      if (savePrefsTimer.current !== null) clearTimeout(savePrefsTimer.current);
     },
     []
   );
@@ -177,7 +188,12 @@ export function FamilyTree({
   const changeGenerations = useCallback((next: number) => {
     const value = clamp(Math.round(next), MIN_GENERATIONS, MAX_GENERATIONS);
     setMaxDepth(value);
-    saveViewPrefs({ maxDepth: value });
+    // 连点 ± 时只落最后一次盘：每次点击都同步写 localStorage 是纯浪费
+    if (savePrefsTimer.current !== null) clearTimeout(savePrefsTimer.current);
+    savePrefsTimer.current = window.setTimeout(() => {
+      saveViewPrefs({ maxDepth: value });
+      savePrefsTimer.current = null;
+    }, 300);
   }, []);
 
   const centerOn = useCallback(
@@ -230,6 +246,24 @@ export function FamilyTree({
     centerOn(focusId);
   }, [focusId, layout, centerOn]);
 
+  /** 画布视口尺寸：值本身不直接用，resize 时靠它触发重渲染，让上面的每帧 effect 重算视口框 */
+  const [, setViewportSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      setViewportSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    update();
+    // jsdom 没有 ResizeObserver；真浏览器里窗口 resize 靠它感知
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const zoomAt = useCallback((clientX: number, clientY: number, factor: number) => {
     const el = containerRef.current;
     if (!el) return;
@@ -259,6 +293,36 @@ export function FamilyTree({
     },
     [flyTo]
   );
+
+  const jumpFromMinimap = useCallback(
+    (x: number, y: number) => {
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const scale = viewRef.current.scale;
+      flyTo({
+        scale,
+        x: rect.width / 2 - x * scale,
+        y: rect.height / 2 - y * scale,
+      });
+    },
+    [flyTo]
+  );
+
+  const minimapRectRef = useRef<SVGRectElement | null>(null);
+  // 平移/缩放/改窗口的每一帧都把小地图视口框同步一次；Minimap 本体 memo 着，
+  // 节点 rect 不随 view 重渲染，这里只动 4 个 SVG 属性
+  useEffect(() => {
+    const rect = minimapRectRef.current;
+    const el = containerRef.current;
+    if (!rect || !el) return;
+    const s = minimapScale(layout);
+    const v = viewRef.current;
+    rect.setAttribute("x", String((-v.x / v.scale) * s));
+    rect.setAttribute("y", String((-v.y / v.scale) * s));
+    rect.setAttribute("width", String(Math.max(8, (el.clientWidth / v.scale) * s)));
+    rect.setAttribute("height", String(Math.max(6, (el.clientHeight / v.scale) * s)));
+  });
 
   useEffect(() => {
     const el = containerRef.current;
@@ -481,19 +545,14 @@ export function FamilyTree({
       {/* 筛选条：亲系 + 代数 */}
       <div className="flex flex-wrap items-center gap-1.5">
         {LINEAGE_FILTERS.map((f) => (
-          <button
+          <PillToggle
             key={f.id}
-            type="button"
+            active={filter === f.id}
             onClick={() => setFilter(f.id)}
-            className={cn(
-              "h-8 rounded-full px-3 text-caption transition-all",
-              filter === f.id
-                ? "glass-btn text-[var(--ink)]"
-                : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
-            )}
+            className="h-8 rounded-full px-3 text-caption"
           >
             {f.label}
-          </button>
+          </PillToggle>
         ))}
         <div className="mx-1 h-4 w-px bg-[var(--glass-edge)]" />
         <div
@@ -502,6 +561,7 @@ export function FamilyTree({
         >
           <button
             type="button"
+            aria-label="减少一代"
             className="flex h-full w-7 items-center justify-center disabled:opacity-30"
             onClick={() => changeGenerations(maxDepth - 1)}
             disabled={maxDepth <= MIN_GENERATIONS}
@@ -512,6 +572,7 @@ export function FamilyTree({
           <span className="min-w-11 text-center tabular-nums">±{maxDepth} 代</span>
           <button
             type="button"
+            aria-label="增加一代"
             className="flex h-full w-7 items-center justify-center disabled:opacity-30"
             onClick={() => changeGenerations(maxDepth + 1)}
             disabled={maxDepth >= MAX_GENERATIONS}
@@ -520,19 +581,14 @@ export function FamilyTree({
             ＋
           </button>
         </div>
-        <button
-          type="button"
+        <PillToggle
+          active={onlyWufu}
           onClick={() => setOnlyWufu((v) => !v)}
-          className={cn(
-            "h-8 rounded-full px-3 text-caption transition-all",
-            onlyWufu
-              ? "glass-btn text-[var(--ink)]"
-              : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
-          )}
+          className="h-8 rounded-full px-3 text-caption"
           title="只显示出服以内的亲人（含配偶）"
         >
           五服内
-        </button>
+        </PillToggle>
         <div className="ml-auto flex items-center gap-2 text-[10px] text-[var(--ink-faint)] sm:gap-3">
           <LegendDot color="var(--line-paternal)" label="父系" />
           <LegendDot color="var(--line-maternal)" label="母系" />
@@ -579,29 +635,7 @@ export function FamilyTree({
         </div>
 
         {showMinimap && (
-          <Minimap
-            layout={layout}
-            view={view}
-            viewport={
-              containerRef.current
-                ? {
-                    w: containerRef.current.clientWidth,
-                    h: containerRef.current.clientHeight,
-                  }
-                : { w: 0, h: 0 }
-            }
-            onJump={(x, y) => {
-              const el = containerRef.current;
-              if (!el) return;
-              const rect = el.getBoundingClientRect();
-              const scale = viewRef.current.scale;
-              flyTo({
-                scale,
-                x: rect.width / 2 - x * scale,
-                y: rect.height / 2 - y * scale,
-              });
-            }}
-          />
+          <Minimap layout={layout} onJump={jumpFromMinimap} viewportRectRef={minimapRectRef} />
         )}
 
         <div className="pointer-events-none absolute bottom-3 right-3 flex flex-col gap-1.5">
@@ -628,7 +662,7 @@ export function FamilyTree({
       </div>
     </div>
   );
-}
+});
 
 function LegendDot({ color, label }: { color: string; label: string }) {
   return (
@@ -640,32 +674,33 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function Minimap({
+/** 小地图固定内框尺寸；缩放比由 layout 决定 */
+const MINIMAP_W = 112;
+const MINIMAP_H = 80;
+
+function minimapScale(layout: TreeLayout): number {
+  const sx = layout.width > 0 ? MINIMAP_W / layout.width : 1;
+  const sy = layout.height > 0 ? MINIMAP_H / layout.height : 1;
+  return Math.min(sx, sy);
+}
+
+/** 视口框的位置由 FamilyTree 的每帧 effect 直接写 SVG 属性（见 minimapRectRef） */
+const Minimap = memo(function Minimap({
   layout,
-  view,
-  viewport,
   onJump,
+  viewportRectRef,
 }: {
   layout: TreeLayout;
-  view: View;
-  viewport: { w: number; h: number };
   onJump: (x: number, y: number) => void;
+  viewportRectRef: React.RefObject<SVGRectElement | null>;
 }) {
-  const W = 112;
-  const H = 80;
-  const sx = layout.width > 0 ? W / layout.width : 1;
-  const sy = layout.height > 0 ? H / layout.height : 1;
-  const s = Math.min(sx, sy);
-  const vx = (-view.x / view.scale) * s;
-  const vy = (-view.y / view.scale) * s;
-  const vw = (viewport.w / view.scale) * s;
-  const vh = (viewport.h / view.scale) * s;
+  const s = minimapScale(layout);
 
   return (
     <button
       type="button"
       className="glass pointer-events-auto absolute bottom-3 left-3 overflow-hidden rounded-xl"
-      style={{ width: W, height: H }}
+      style={{ width: MINIMAP_W, height: MINIMAP_H }}
       title="点击跳转"
       onClick={(e) => {
         const rect = e.currentTarget.getBoundingClientRect();
@@ -674,7 +709,7 @@ function Minimap({
         onJump(px, py);
       }}
     >
-      <svg width={W} height={H} className="absolute inset-0">
+      <svg width={MINIMAP_W} height={MINIMAP_H} className="absolute inset-0">
         {layout.nodes.map((n) => (
           <rect
             key={n.id}
@@ -688,10 +723,7 @@ function Minimap({
           />
         ))}
         <rect
-          x={vx}
-          y={vy}
-          width={Math.max(8, vw)}
-          height={Math.max(6, vh)}
+          ref={viewportRectRef}
           fill="none"
           stroke="var(--accent)"
           strokeWidth={1.2}
@@ -699,7 +731,7 @@ function Minimap({
       </svg>
     </button>
   );
-}
+});
 
 const TreeScene = memo(function TreeScene({
   layout,

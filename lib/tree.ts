@@ -1,21 +1,29 @@
 import {
+  areSpouses,
   type FamilyState,
-  type WufuResult,
-  getChildrenIds,
-  getCoParentIds,
-  getRelationDistances,
+  getPartnerIds,
   getSpouseIds,
+  type WufuResult,
 } from "./family";
 import {
+  bfsDistances,
+  buildGraphIndexes,
+  childrenOf,
+  descendantSetOf,
+  shareAParent,
+  type GraphIndexes,
+} from "./graph";
+import {
+  type LineageContext,
   type LineageFilter,
   type LineageKind,
   classifyLineage,
-    filterVisibleIds,
+  collateralSide,
+  filterVisibleIds,
   generationLabel,
   isBloodDescendant,
   pedigreePath,
   pedigreeSortKey,
-  collateralSide,
 } from "./lineage";
 
 export const NODE_W = 208;
@@ -160,32 +168,17 @@ function clusterRankOf(
   state: FamilyState,
   unitMembers: string[],
   meId: string | null,
-  distances: Map<string, number | null>
+  descendants?: Set<string>
 ): number {
   if (!meId || !state.persons[meId]) return 4;
-  const mySpouses = new Set(
-    state.spouses
-      .filter((s) => s.a === meId || s.b === meId)
-      .map((s) => (s.a === meId ? s.b : s.a))
-  );
-
-  const shareParents = (a: string, b: string) => {
-    const pa = state.parents[a];
-    const pb = state.parents[b];
-    if (!pa || !pb) return false;
-    return Boolean(
-      (pa.fatherId && pa.fatherId === pb.fatherId) ||
-        (pa.motherId && pa.motherId === pb.motherId)
-    );
-  };
+  const mySpouses = new Set(getSpouseIds(state, meId));
 
   /** 是否「我」的后代（沿 parents 上溯能碰到 meId）；实现统一在 lineage.ts */
-  const isMeDescendant = (id: string): boolean => isBloodDescendant(state, id, meId);
+  const isMeDescendant = (id: string): boolean =>
+    descendants ? descendants.has(id) : isBloodDescendant(state, id, meId);
 
   const isSpouseOf = (id: string, personId: string) =>
-    state.spouses.some(
-      (s) => (s.a === id && s.b === personId) || (s.b === id && s.a === personId)
-    );
+    areSpouses(state, id, personId);
 
   const myP = state.parents[meId];
   const myParentIds = [myP?.fatherId, myP?.motherId].filter(Boolean) as string[];
@@ -214,21 +207,21 @@ function clusterRankOf(
         return 0;
       }
     }
-    if (shareParents(meId, id)) return 1;
+    if (shareAParent(state, meId, id)) return 1;
     // 我同胞的配偶
     if (isMeDescendant(id) === false) {
       for (const s of state.spouses) {
         const other = s.a === id ? s.b : s.b === id ? s.a : null;
-        if (other && shareParents(meId, other) && isSpouseOf(id, other)) return 1;
+        if (other && shareAParent(state, meId, other) && isSpouseOf(id, other)) return 1;
       }
     }
     // 父母的同胞
     for (const pid of myParentIds) {
-      if (shareParents(pid, id)) return 2;
+      if (shareAParent(state, pid, id)) return 2;
     }
     // 配偶的同胞（妻兄弟姐妹等）
     for (const spId of mySpouses) {
-      if (shareParents(spId, id)) return 3;
+      if (shareAParent(state, spId, id)) return 3;
     }
     // 姻亲旁系的后代：父母任一方 rank>=3 则本人也是 3
     if (parents) {
@@ -242,7 +235,6 @@ function clusterRankOf(
         return 2;
       }
     }
-    void distances;
     return 4;
   };
 
@@ -253,38 +245,44 @@ function clusterRankOf(
   return best;
 }
 
-function buildRoutes(
-  state: FamilyState,
+function pairKeyOf(x: string, y: string): string {
+  return x < y ? x + "|" + y : y + "|" + x;
+}
+
+/** X 的唯一伴侣：配偶 ∪ 共同养育者恰有一位时返回该人，否则 null。
+ *  与 family.ts 的 getPartnerIds 同源（配偶 ∪ 共同养育者），这里只取唯一解。 */
+function uniquePartnerOf(state: FamilyState, id: string): string | null {
+  const partners = getPartnerIds(state, id);
+  return partners.length === 1 ? partners[0] : null;
+}
+
+/** 两张卡的相向边之间是否隔着同排的其他卡片（多配偶同单元时必隔） */
+function rowBlockedBetween(
   byId: Map<string, TreeLayoutNode>,
-  lineageOf: Map<string, LineageKind>
-): TreeLayoutRoute[] {
-  const routes: TreeLayoutRoute[] = [];
+  left: TreeLayoutNode,
+  right: TreeLayoutNode
+): boolean {
+  const leftRight = left.x + left.width;
+  for (const n of byId.values()) {
+    if (n === left || n === right) continue;
+    if (Math.abs(n.y - left.y) > 2) continue;
+    if (n.x < right.x - 2 && n.x + n.width > leftRight + 2) return true;
+  }
+  return false;
+}
 
-  /** 两张卡的相向边之间是否隔着同排的其他卡片（多配偶同单元时必隔） */
-  const rowBlockedBetween = (
-    left: TreeLayoutNode,
-    right: TreeLayoutNode
-  ): boolean => {
-    const leftRight = left.x + left.width;
-    for (const n of byId.values()) {
-      if (n === left || n === right) continue;
-      if (Math.abs(n.y - left.y) > 2) continue;
-      if (n.x < right.x - 2 && n.x + n.width > leftRight + 2) return true;
-    }
-    return false;
-  };
+/** 同一对双亲（夫妻或共同养育）名下、可走总线画法的子女 */
+interface CoupleKidGroup {
+  f: string;
+  m: string;
+  kids: Array<{ id: string; n: TreeLayoutNode }>;
+}
 
-  const pairKey = (x: string, y: string) => (x < y ? x + "|" + y : y + "|" + x);
-
-  /** X 的唯一伴侣：配偶 ∪ 共同养育者恰有一位时返回该人，否则 null */
-  const uniquePartnerOf = (id: string): string | null => {
-    const partners = new Set<string>(getSpouseIds(state, id));
-    for (const p of getCoParentIds(state, id)) partners.add(p);
-    if (partners.size !== 1) return null;
-    return [...partners][0];
-  };
-
-  // ── 经典族谱画法：夫妻横线相连，从横线中点垂落，多子女共享一条总线 ──
+/** 经典族谱画法的第一步：把「父母相邻且都在子女上方」的子女按父母对分组 */
+function collectCoupleKids(
+  state: FamilyState,
+  byId: Map<string, TreeLayoutNode>
+): { coupleKids: Map<string, CoupleKidGroup>; handledKids: Set<string> } {
   // 双亲（已婚或共同养育，buildUnits 已把他们并格相邻）且都在子女上方才适用。
   // 只关联了一位亲长的子女：若该亲长恰有一位伴侣，同样并入这对伴侣的总线
   // （仅展示推断，不改数据——旧数据/漏录的子女也能与兄姐同线）。
@@ -299,7 +297,7 @@ function buildRoutes(
     if (Boolean(f) !== Boolean(m)) {
       const only = (f ?? m) as string;
       if (byId.has(only)) {
-        const partner = uniquePartnerOf(only);
+        const partner = uniquePartnerOf(state, only);
         if (partner && byId.has(partner)) {
           if (!f) f = partner;
           else m = partner;
@@ -318,16 +316,22 @@ function buildRoutes(
       (gapF >= -2 && gapF <= SPOUSE_GAP + 2) ||
       (gapM >= -2 && gapM <= SPOUSE_GAP + 2);
     if (!adjacent) continue;
-    const key = pairKey(f, m);
+    const key = pairKeyOf(f, m);
     const grp = coupleKids.get(key) ?? { f, m, kids: [] };
     grp.kids.push({ id: childId, n: child });
     coupleKids.set(key, grp);
     handledKids.add(childId);
   }
+  return { coupleKids, handledKids };
+}
 
-  // 同一父母行里的多对夫妻共享同一片行间空带：总线高度按对错开
-  // （在空带的 28%–72% 区间均匀分布），否则相邻家庭的横线在同一高度上
-  // 前后相接，看起来连成了一条线。单独一对夫妻保持居中。
+/** 同一父母行里的多对夫妻共享同一片行间空带：总线高度按对错开，
+ *  在空带的 28%–72% 区间均匀分布，否则相邻家庭的横线在同一高度上
+ *  前后相接，看起来连成了一条线。单独一对夫妻保持居中。 */
+function assignLaneRatios(
+  coupleKids: Map<string, CoupleKidGroup>,
+  byId: Map<string, TreeLayoutNode>
+): Map<string, number> {
   const laneRatio = new Map<string, number>(); // `${pairKey}@${childRowY}` → 0..1
   {
     const lanes = new Map<string, Array<{ tag: string; first: number }>>();
@@ -362,7 +366,17 @@ function buildRoutes(
       });
     }
   }
+  return laneRatio;
+}
 
+/** 夫妻总线画法：横线中点垂落到总线，再为每个孩子补一根落到顶边中点的短垂线 */
+function emitCoupleRoutes(
+  coupleKids: Map<string, CoupleKidGroup>,
+  laneRatio: Map<string, number>,
+  byId: Map<string, TreeLayoutNode>,
+  lineageOf: Map<string, LineageKind>,
+  routes: TreeLayoutRoute[]
+): void {
   for (const [key, { f, m, kids }] of coupleKids) {
     const nf = byId.get(f)!;
     const nm = byId.get(m)!;
@@ -456,8 +470,16 @@ function buildRoutes(
       }
     }
   }
+}
 
-  // ── 兜底：单亲 / 不相邻的双亲 —— 各自从卡片下沿肘线连接 ──
+/** 兜底：单亲 / 不相邻的双亲 —— 各自从卡片下沿肘线连接 */
+function emitFallbackRoutes(
+  state: FamilyState,
+  byId: Map<string, TreeLayoutNode>,
+  lineageOf: Map<string, LineageKind>,
+  handledKids: Set<string>,
+  routes: TreeLayoutRoute[]
+): void {
   for (const [childId, entry] of Object.entries(state.parents)) {
     if (handledKids.has(childId)) continue;
     const child = byId.get(childId);
@@ -557,14 +579,20 @@ function buildRoutes(
       });
     });
   }
+}
 
-  // 「父母相连」的横线覆盖两类：婚姻边 + 共同养育（同一子女的双亲）。
-  // 后者「添加母亲」不会建婚姻记录，但展示上父母同样并格相连。
+/** 「父母相连」的横线：婚姻边 + 共同养育（同一子女的双亲）+ 唯一伴侣对。
+ *  后者「添加母亲」不会建婚姻记录，但展示上父母同样并格相连。 */
+function emitConnectorRoutes(
+  state: FamilyState,
+  byId: Map<string, TreeLayoutNode>,
+  routes: TreeLayoutRoute[]
+): void {
   const connectorPairs: Array<[string, string]> = [];
   const seenPair = new Set<string>();
   for (const { a, b } of state.spouses) {
     if (!byId.has(a) || !byId.has(b)) continue;
-    const key = pairKey(a, b);
+    const key = pairKeyOf(a, b);
     if (seenPair.has(key)) continue;
     seenPair.add(key);
     connectorPairs.push([a, b]);
@@ -572,16 +600,16 @@ function buildRoutes(
   for (const entry of Object.values(state.parents)) {
     const { fatherId: f, motherId: m } = entry;
     if (!f || !m || !byId.has(f) || !byId.has(m)) continue;
-    const key = pairKey(f, m);
+    const key = pairKeyOf(f, m);
     if (seenPair.has(key)) continue;
     seenPair.add(key);
     connectorPairs.push([f, m]);
   }
   // 唯一伴侣对：哪怕所有子女都只录了一位亲长，父母横线也不能缺席
   for (const id of byId.keys()) {
-    const partner = uniquePartnerOf(id);
+    const partner = uniquePartnerOf(state, id);
     if (!partner || !byId.has(partner)) continue;
-    const key = pairKey(id, partner);
+    const key = pairKeyOf(id, partner);
     if (seenPair.has(key)) continue;
     seenPair.add(key);
     connectorPairs.push([id, partner]);
@@ -599,7 +627,7 @@ function buildRoutes(
     let d: string;
     let start: { x: number; y: number };
     let end: { x: number; y: number };
-    if (rowBlockedBetween(left, right)) {
+    if (rowBlockedBetween(byId, left, right)) {
       // 中间隔着同排的其他卡片（如 A—B—C 单元里 A 与 C 的婚姻）：
       // 直连会从中间人卡片背后穿过，看起来断线。沿行下方 30px 绕行。
       const dropY = left.y + left.height + 30;
@@ -628,43 +656,52 @@ function buildRoutes(
       end,
     });
   }
+}
 
+/**
+ * 连线总装。三段各自独立、顺序不变：总线画法优先认领子女，
+ * 认领剩下的走兜底肘线，配偶横线最后按对补齐。
+ */
+function buildRoutes(
+  state: FamilyState,
+  byId: Map<string, TreeLayoutNode>,
+  lineageOf: Map<string, LineageKind>
+): TreeLayoutRoute[] {
+  const routes: TreeLayoutRoute[] = [];
+  const { coupleKids, handledKids } = collectCoupleKids(state, byId);
+  const laneRatio = assignLaneRatios(coupleKids, byId);
+  emitCoupleRoutes(coupleKids, laneRatio, byId, lineageOf, routes);
+  emitFallbackRoutes(state, byId, lineageOf, handledKids, routes);
+  emitConnectorRoutes(state, byId, routes);
   return routes;
 }
 
-export function layoutFamilyTree(
-  state: FamilyState,
-  options: LayoutOptions = {}
-): TreeLayout {
-  const filter = options.filter ?? "all";
-  const maxDepth = options.maxDepth ?? 6;
-  let visible =
-    filter === "all" && maxDepth >= 99
-      ? new Set(Object.keys(state.persons))
-      : filterVisibleIds(state, filter, maxDepth);
-  if (options.wufu) {
-    const inWufu = new Set<string>();
-    for (const id of visible) {
-      // 「我」不对自己算服制（wufuOf 返回 null），必须始终保留
-      if (id === state.meId || options.wufu.get(id)?.grade !== "出服") {
-        inWufu.add(id);
-      }
-    }
-    visible = inWufu;
-  }
-  const working =
-    visible.size === Object.keys(state.persons).length
-      ? state
-      : restrictState(state, visible);
+/** 布局中段产出：单元、代际、同代扫掠后的最终槽位中心都定好 */
+interface LayoutPlan {
+  membersOf: Map<string, string[]>;
+  generationOf: Map<string, number>;
+  centerOf: Map<string, number>;
+  /** 与「我」连通的代际（升序去重）与其最小值 */
+  generations: number[];
+  minGeneration: number;
+}
 
+function unitWidthOf(members: string[]): number {
+  return members.length * NODE_W + (members.length - 1) * SPOUSE_GAP;
+}
+
+/**
+ * 槽位规划：夫妻并格 → 单元代际 → 子树 DFS 理想中心 → 重心微调 →
+ * 同代扫掠避让。纯几何编排，不碰 DOM。
+ */
+function planUnitSlots(
+  working: FamilyState,
+  indexes: GraphIndexes,
+  distances: Map<string, number | null>,
+  lineageCtx: LineageContext,
+  lineageOf: Map<string, LineageKind>
+): LayoutPlan {
   const meId = working.meId;
-  const distances = getRelationDistances(working);
-  const lineageDist = distances;
-  const lineageOf = new Map<string, LineageKind>();
-  for (const id of Object.keys(working.persons)) {
-    lineageOf.set(id, classifyLineage(working, id, meId, lineageDist as Map<string, number | null>));
-  }
-
   const ids = Object.keys(working.persons);
   const unitOf = buildUnits(working, ids);
 
@@ -691,11 +728,21 @@ export function layoutFamilyTree(
     });
   }
 
-    const unitClusterOf = (unit: string): number => {
-    return clusterRankOf(working, membersOf.get(unit) ?? [], meId, distances as Map<string, number | null>);
+  const unitClusterOf = (unit: string): number => {
+    return clusterRankOf(
+      working,
+      membersOf.get(unit) ?? [],
+      meId,
+      lineageCtx.descendants
+    );
   };
 
+  // 排序比较器会反复取同一单元的谱系键；按单元记一份，
+  // 键内的 pedigreePath / collateralSide 每成员只算一次
+  const pedigreeKeyCache = new Map<string, string>();
   const unitPedigreeKey = (unit: string): string => {
+    const cached = pedigreeKeyCache.get(unit);
+    if (cached !== undefined) return cached;
     const members = membersOf.get(unit) ?? [];
     let best = "9";
     for (const id of members) {
@@ -707,7 +754,7 @@ export function layoutFamilyTree(
       }
       const lineage = lineageOf.get(id);
       const birth = working.persons[id]?.birthYear ?? "";
-      const side = collateralSide(working, id, meId);
+      const side = collateralSide(working, id, meId, lineageCtx);
       let key = "9";
       if (lineage === "collateral" && side === "paternal") key = "!P" + birth + id;
       else if (lineage === "sibling") key = "03S" + birth + id;
@@ -716,6 +763,7 @@ export function layoutFamilyTree(
       else key = "9" + id;
       if (key < best) best = key;
     }
+    pedigreeKeyCache.set(unit, best);
     return best;
   };
 
@@ -724,7 +772,7 @@ export function layoutFamilyTree(
     let generation = Number.POSITIVE_INFINITY;
     for (const id of members) {
       const d = distances.get(id);
-      if (d !== null && d !== undefined) generation = Math.min(generation, d as number);
+      if (d !== null && d !== undefined) generation = Math.min(generation, d);
     }
     generationOf.set(unit, generation);
   }
@@ -733,7 +781,7 @@ export function layoutFamilyTree(
   for (const [unit, members] of membersOf) {
     const childUnits = new Set<string>();
     for (const id of members) {
-      for (const childId of getChildrenIds(working, id)) {
+      for (const childId of childrenOf(id, indexes.childIndex)) {
         const childUnit = unitOf.get(childId);
         if (childUnit && childUnit !== unit) childUnits.add(childUnit);
       }
@@ -758,10 +806,8 @@ export function layoutFamilyTree(
     }
   }
 
-  const widthOf = (unit: string): number => {
-    const members = membersOf.get(unit) as string[];
-    return members.length * NODE_W + (members.length - 1) * SPOUSE_GAP;
-  };
+  const widthOf = (unit: string): number =>
+    unitWidthOf(membersOf.get(unit) as string[]);
 
   const idealCenterOf = new Map<string, number>();
   let nextSlot = 0;
@@ -885,6 +931,82 @@ export function layoutFamilyTree(
   );
   for (const [unit, center] of sweepRow(orphanUnits)) centerOf.set(unit, center);
 
+  const connectedUnits = [...membersOf.keys()].filter((unit) =>
+    Number.isFinite(generationOf.get(unit))
+  );
+  const generations = [
+    ...new Set(connectedUnits.map((u) => generationOf.get(u) as number)),
+  ].sort((a, b) => a - b);
+  const minGeneration = generations[0] ?? 0;
+  return { membersOf, generationOf, centerOf, generations, minGeneration };
+}
+
+export function layoutFamilyTree(
+  state: FamilyState,
+  options: LayoutOptions = {}
+): TreeLayout {
+  const filter = options.filter ?? "all";
+  const maxDepth = options.maxDepth ?? 6;
+  // 筛选阶段的缓存建在**原始 state** 上；working === state 时可被下面的
+  // 亲系分类直接复用，路径/祖先闭包不再算第二遍
+  const filterCtx: LineageContext = { paths: new Map(), ancestors: new Map() };
+  let visible: Set<string>;
+  if (filter === "all" && maxDepth >= 99) {
+    visible = new Set(Object.keys(state.persons));
+  } else {
+    filterCtx.descendants = state.meId
+      ? descendantSetOf(state, state.meId, buildGraphIndexes(state).childIndex)
+      : undefined;
+    visible = filterVisibleIds(state, filter, maxDepth, filterCtx);
+  }
+  if (options.wufu) {
+    const inWufu = new Set<string>();
+    for (const id of visible) {
+      // 「我」不对自己算服制（wufuOf 返回 null），必须始终保留
+      if (id === state.meId || options.wufu.get(id)?.grade !== "出服") {
+        inWufu.add(id);
+      }
+    }
+    visible = inWufu;
+  }
+  const working =
+    visible.size === Object.keys(state.persons).length
+      ? state
+      : restrictState(state, visible);
+
+  const meId = working.meId;
+  const indexes = buildGraphIndexes(working);
+  const distances = bfsDistances(working, meId, indexes);
+  // 亲系分类每人 O(V)：一次建好共享上下文（距离/路径/祖先/后代），
+  // 布局内所有 classifyLineage / collateralSide / clusterRankOf 复用，
+  // 不再逐人重跑 BFS
+  const lineageCtx: LineageContext =
+    working === state
+      ? {
+          ...filterCtx,
+          distances,
+          descendants:
+            filterCtx.descendants ??
+            (meId ? descendantSetOf(working, meId, indexes.childIndex) : undefined),
+        }
+      : {
+          distances,
+          paths: new Map(),
+          ancestors: new Map(),
+          descendants: meId
+            ? descendantSetOf(working, meId, indexes.childIndex)
+            : undefined,
+        };
+  const lineageOf = new Map<string, LineageKind>();
+  for (const id of Object.keys(working.persons)) {
+    lineageOf.set(id, classifyLineage(working, id, meId, lineageCtx));
+  }
+
+  const plan = planUnitSlots(working, indexes, distances, lineageCtx, lineageOf);
+  const { membersOf, generationOf, centerOf, generations, minGeneration } = plan;
+  const widthOf = (unit: string): number =>
+    unitWidthOf(membersOf.get(unit) as string[]);
+
   const nodes: TreeLayoutNode[] = [];
   const byId = new Map<string, TreeLayoutNode>();
   const connected = [...membersOf.keys()].filter((unit) =>
@@ -915,10 +1037,6 @@ export function layoutFamilyTree(
     });
   };
 
-  const generations = [...new Set(connected.map((u) => generationOf.get(u) as number))].sort(
-    (a, b) => a - b
-  );
-  const minGeneration = generations[0] ?? 0;
   for (const unit of connected) {
     const generation = generationOf.get(unit) as number;
     place(unit, (generation - minGeneration) * (NODE_H + V_GAP));

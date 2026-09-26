@@ -1,37 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Crown,
-  Download,
-  Heart,
-  Home,
-  Monitor,
-  Moon,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings2,
-  Sun,
-  Trash2,
-  Upload,
-  UserCheck,
-  Users,
-  X,
-} from "lucide-react";
-import { Avatar } from "@/components/avatar";
+import { Monitor, Moon, Search, Settings2, Sun, Users } from "lucide-react";
+
+import { AddRelationSheet } from "@/components/dialogs/add-relation-sheet";
+import { ConfirmDialog } from "@/components/dialogs/confirm-dialog";
+import { PersonEditSheet } from "@/components/dialogs/person-edit-sheet";
+import { SearchPanel } from "@/components/dialogs/search-panel";
+import { SettingsSheet } from "@/components/dialogs/settings-sheet";
+import { GenderPicker } from "@/components/gender-picker";
 import { FamilyTree } from "@/components/family-tree";
-import { loadDevSample } from "@/lib/dev-sample";
-import {
-  DEFAULT_VIEW_PREFS,
-  type ViewPrefs,
-  LEGACY_LAYOUT_MODE_KEY,
-  loadViewPrefs,
-  saveViewPrefs,
-} from "@/lib/view-prefs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,43 +20,44 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { SheetBody } from "@/components/ui/sheet-body";
+import { loadDevSample } from "@/lib/dev-sample";
+import {
+  DEFAULT_VIEW_PREFS,
+  type ViewPrefs,
+  LEGACY_LAYOUT_MODE_KEY,
+  loadViewPrefs,
+  saveViewPrefs,
+} from "@/lib/view-prefs";
 import {
   type AmbiguousLink,
-  type EventType,
-  type FamilyEvent,
   type FamilyState,
   type Gender,
   type Person,
-  type RelationBase,
   type RelationKind,
-  type WufuResult,
-  EVENT_TYPES,
-  applyRepairs,
-  findRepairableLinks,
-  wufuOf,
-  zodiacOf,
+  RELATION_APPLIERS,
   addParentLink,
   addSpouseLink,
-  areSpouses,
+  applyRepairs,
+  buildWufuMap,
   createEmptyState,
   createPerson,
-  defaultGenderFor,
   exportState,
+  findRepairableLinks,
   getFatherId,
   getMotherId,
   getPartnerIds,
   groupByRelationDistance,
-  lifespanOf,
   importState,
   linkChildWithParents,
   loadState,
-  newId,
   relationBaseOf,
   relationOptions,
   removePersonDeep,
   saveState,
   spouseGenderConflictReason,
 } from "@/lib/family";
+import { buildKinshipMap } from "@/lib/kinship";
 import {
   type ThemeMode,
   applyTheme,
@@ -88,36 +67,31 @@ import {
 } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
-type AddMode = RelationKind | null;
+/**
+ * 互斥弹窗只有一个在场：用可辨析联合代替六个独立的 boolean/id state，
+ * 结构上保证不可能双开。ambiguous 横幅是提示性质，可以与任意弹窗同屏，
+ * 因此保持独立。
+ */
+type ActiveDialog =
+  | { kind: "none" }
+  | { kind: "search" }
+  | { kind: "settings" }
+  | { kind: "edit"; personId: string }
+  | { kind: "relation-picker"; personId: string }
+  | { kind: "add-relation"; mode: RelationKind };
+
+/** 确认弹窗的请求：确认动作以闭包形式给出，弹窗本身不碰数据 */
+interface ConfirmRequest {
+  title: string;
+  description?: string;
+  confirmLabel: string;
+  action: () => void;
+}
 
 const THEME_META: Record<ThemeMode, { label: string; icon: typeof Sun }> = {
   light: { label: "浅色", icon: Sun },
   dark: { label: "深色", icon: Moon },
   system: { label: "跟随系统", icon: Monitor },
-};
-
-
-/**
- * 新建一个关系：把「边操作种类 + 焦点 + 新人物」映射成一个**纯函数**
- * `FamilyState -> FamilyState`。
- *
- * 用查表取代 if/else 链：每种边操作就是一个可单独测试、可单独替换的纯函数，
- * 也不用在分支里手写不可变更新。细分的六种关系（夫/妻/子/女）先经
- * `relationBaseOf` 归约到这四种边操作，可用性规则统一在 lib 的
- * `relationOptions` 里，组件不散写。
- */
-const RELATION_APPLIERS: Record<
-  RelationBase,
-  (state: FamilyState, focusId: string, personId: string) => FamilyState
-> = {
-  father: (state, focusId, personId) =>
-    addParentLink(state, focusId, personId, "father"),
-  mother: (state, focusId, personId) =>
-    addParentLink(state, focusId, personId, "mother"),
-  spouse: (state, focusId, personId) =>
-    addSpouseLink(state, focusId, personId),
-  child: (state, focusId, personId) =>
-    linkChildWithParents(state, personId, focusId),
 };
 
 /**
@@ -169,17 +143,13 @@ export function FamilyApp() {
   const [state, setState] = useState<FamilyState>(() => createEmptyState());
   const [focusId, setFocusId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [addMode, setAddMode] = useState<AddMode>(null);
+  const [activeDialog, setActiveDialog] = useState<ActiveDialog>({ kind: "none" });
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
   /** 有多位配偶候选、无法自动确定的缺失双亲；等用户逐条指定 */
   const [ambiguous, setAmbiguous] = useState<AmbiguousLink[]>([]);
   const [ambiguousOpen, setAmbiguousOpen] = useState(false);
-  /** 节点上的「增加关系」按钮：先选关系种类，再开新建表单 */
-  const [relationPickerFor, setRelationPickerFor] = useState<string | null>(null);
   const [viewPrefs, setViewPrefs] = useState<ViewPrefs>(DEFAULT_VIEW_PREFS);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -227,16 +197,47 @@ export function FamilyApp() {
 
   useEffect(() => {
     if (!hydrated) return;
-    if (!saveState(state)) {
-      setToast("本机存储写入失败：配额可能已满，或被浏览器限制");
-    }
+    // 连续写入只落最后一次盘（JSON.stringify 全量序列化不便宜）；
+    // 关页/切后台时同步补写一次，防丢最后 250ms 内的变更
+    const t = setTimeout(() => {
+      if (!saveState(state)) {
+        setToast("本机存储写入失败：配额可能已满，或被浏览器限制");
+      }
+    }, 250);
+    return () => clearTimeout(t);
   }, [state, hydrated]);
+
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  useEffect(() => {
+    if (!hydrated) return;
+    const flush = () => {
+      saveState(stateRef.current);
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
+  }, [hydrated]);
 
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 2200);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // 全图派生层：一次 state 变更只算一遍，五服/称谓/距离分组多处共用。
+  // 这些都是 O(V²) 级的重计算，曾分散在画布/编辑面板/查找面板里各自推导。
+  const graph = useMemo(
+    () => ({
+      wufu: buildWufuMap(state),
+      kinship: buildKinshipMap(state, state.meId),
+      distanceGroups: groupByRelationDistance(state),
+    }),
+    [state]
+  );
 
   const changeShowMinimap = useCallback((show: boolean) => {
     setViewPrefs((p) => ({ ...p, showMinimap: show }));
@@ -249,6 +250,8 @@ export function FamilyApp() {
     applyTheme(resolveTheme(mode));
   }, []);
 
+  const closeDialog = useCallback(() => setActiveDialog({ kind: "none" }), []);
+
   const focus = focusId && state.persons[focusId] ? focusId : null;
   const meId = state.meId;
 
@@ -259,6 +262,15 @@ export function FamilyApp() {
     }));
   }, []);
 
+  // FamilyTree 已 memo：这两个回调必须稳定，弹窗/toast 状态变化才不会
+  // 穿透重渲染整棵画布
+  const handleOpenPerson = useCallback((id: string) => {
+    setActiveDialog({ kind: "edit", personId: id });
+  }, []);
+  const handleAddRelationRequest = useCallback((id: string) => {
+    setActiveDialog({ kind: "relation-picker", personId: id });
+  }, []);
+
   const setAsMe = useCallback((id: string) => {
     setState((s) => ({ ...s, meId: id }));
     setFocusId(id);
@@ -266,11 +278,17 @@ export function FamilyApp() {
   }, []);
 
   const deletePerson = useCallback((id: string) => {
-    if (!window.confirm("确定删除此人及其关系？此操作不可撤销。")) return;
-    setState((s) => removePersonDeep(s, id));
-    setEditingId(null);
-    setToast("已删除");
-    setFocusId((prev) => (prev === id ? null : prev));
+    setConfirmRequest({
+      title: "删除此人？",
+      description: "将同时解除此人全部亲属关系，此操作不可撤销。",
+      confirmLabel: "删除",
+      action: () => {
+        setState((s) => removePersonDeep(s, id));
+        setActiveDialog({ kind: "none" });
+        setToast("已删除");
+        setFocusId((prev) => (prev === id ? null : prev));
+      },
+    });
   }, []);
 
   const handleAddRelation = useCallback(
@@ -295,7 +313,7 @@ export function FamilyApp() {
           person.id
         )
       );
-      setAddMode(null);
+      setActiveDialog({ kind: "none" });
       setToast("已添加");
     },
     [focus, state.persons]
@@ -305,7 +323,7 @@ export function FamilyApp() {
     (childId: string) => {
       if (!focus || childId === focus) return;
       setState((s) => linkChildWithParents(s, childId, focus));
-      setAddMode(null);
+      setActiveDialog({ kind: "none" });
       setToast("已关联为子女");
     },
     [focus]
@@ -315,7 +333,7 @@ export function FamilyApp() {
     (parentId: string, role: "father" | "mother") => {
       if (!focus || parentId === focus) return;
       setState((s) => addParentLink(s, focus, parentId, role));
-      setAddMode(null);
+      setActiveDialog({ kind: "none" });
       setToast("已关联");
     },
     [focus]
@@ -333,7 +351,7 @@ export function FamilyApp() {
         return;
       }
       setState((s) => addSpouseLink(s, focus, otherId));
-      setAddMode(null);
+      setActiveDialog({ kind: "none" });
       setToast("已结为配偶");
     },
     [focus, state.persons]
@@ -351,27 +369,46 @@ export function FamilyApp() {
   }, [state]);
 
   const importJson = useCallback((file: File) => {
-    if (!window.confirm("导入将覆盖当前全部数据，确定继续？")) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const next = importState(String(reader.result));
-        setState(next);
-        setFocusId(next.meId ?? firstPersonId(next));
-        setToast("导入成功");
-      } catch {
-        setToast("导入失败：格式不正确");
-      }
-    };
-    reader.readAsText(file);
+    setConfirmRequest({
+      title: "导入并覆盖当前数据？",
+      description: "导入的 JSON 将覆盖本机全部数据，建议先导出备份。",
+      confirmLabel: "导入",
+      action: () => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const next = importState(String(reader.result));
+            setState(next);
+            setFocusId(next.meId ?? firstPersonId(next));
+            setToast("导入成功");
+          } catch {
+            setToast("导入失败：格式不正确");
+          }
+        };
+        reader.readAsText(file);
+      },
+    });
   }, []);
 
   const resetAll = useCallback(() => {
-    if (!window.confirm("确定清空全部数据？此操作不可撤销。")) return;
-    setState(createEmptyState());
-    setFocusId(null);
-    setToast("已清空");
+    setConfirmRequest({
+      title: "清空全部数据？",
+      description: "所有成员与关系都会被删除，此操作不可撤销。",
+      confirmLabel: "清空",
+      action: () => {
+        setState(createEmptyState());
+        setFocusId(null);
+        setToast("已清空");
+      },
+    });
   }, []);
+
+  /** 确认弹窗：动作只跑一次（updater 必须是纯函数，副作用放在外面） */
+  const handleConfirm = useCallback(() => {
+    confirmRequest?.action();
+    setConfirmRequest(null);
+  }, [confirmRequest]);
+  const cancelConfirm = useCallback(() => setConfirmRequest(null), []);
 
   /** 设置弹窗里的「重载示例数据」：无视现有数据，直接用 public/ 下的示例覆盖（仅开发模式可见） */
   const reloadDevSample = useCallback(async () => {
@@ -379,7 +416,7 @@ export function FamilyApp() {
     if (sample) {
       setState(sample);
       setFocusId(sample.meId ?? firstPersonId(sample));
-      setSettingsOpen(false);
+      setActiveDialog({ kind: "none" });
       setToast("已重载示例数据");
     } else {
       setToast("示例数据不可用");
@@ -423,8 +460,8 @@ export function FamilyApp() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       {/* Header — 100% 宽度，通栏。品牌 / 查找 / 数据 / 主题，各占一个图标。 */}
-      <header className="sticky top-0 z-40 w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--bg-0)]/75 backdrop-blur-2xl">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+      <header className="safe-top sticky top-0 z-40 w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--bg-0)]/75 pb-3 backdrop-blur-2xl">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-2.5" data-header-item>
             <AppMark className="h-8 w-8 shrink-0 sm:h-9 sm:w-9" />
             <h1 className="truncate text-display font-semibold tracking-tight text-[var(--ink)]">
@@ -435,8 +472,9 @@ export function FamilyApp() {
             <Button
               variant="ghost"
               size="icon-sm"
+              className="hit-40"
               data-header-item
-              onClick={() => setSearchOpen(true)}
+              onClick={() => setActiveDialog({ kind: "search" })}
               title="查找"
             >
               <Search className="h-4 w-4" />
@@ -444,8 +482,9 @@ export function FamilyApp() {
             <Button
               variant="ghost"
               size="icon-sm"
+              className="hit-40"
               data-header-item
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => setActiveDialog({ kind: "settings" })}
               title="设置"
             >
               <Settings2 className="h-4 w-4" />
@@ -493,9 +532,11 @@ export function FamilyApp() {
             state={state}
             focusId={focus}
             showMinimap={viewPrefs.showMinimap}
-            onOpenPerson={(id) => setEditingId(id)}
-            onAddRelation={(id) => setRelationPickerFor(id)}
-            onSetMe={(id) => setAsMe(id)}
+            kinship={graph.kinship}
+            wufu={graph.wufu}
+            onOpenPerson={handleOpenPerson}
+            onAddRelation={handleAddRelationRequest}
+            onSetMe={setAsMe}
           />
         )}
       </main>
@@ -508,7 +549,12 @@ export function FamilyApp() {
       </footer>
 
       {/* 查找弹窗 */}
-      <Sheet open={searchOpen} onOpenChange={setSearchOpen}>
+      <Sheet
+        open={activeDialog.kind === "search"}
+        onOpenChange={(open) => {
+          if (!open) closeDialog();
+        }}
+      >
         <SheetContent side="responsive">
           <SheetHeader>
             <SheetTitle>查找</SheetTitle>
@@ -516,90 +562,36 @@ export function FamilyApp() {
           </SheetHeader>
           <SearchPanel
             state={state}
+            groups={graph.distanceGroups}
             onSelect={(id) => {
               setFocusId(id);
-              setSearchOpen(false);
+              closeDialog();
             }}
           />
         </SheetContent>
       </Sheet>
 
-      
-      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <SheetContent side="center">
-          <SheetHeader>
-            <SheetTitle>设置</SheetTitle>
-            <SheetDescription>显示偏好与数据管理</SheetDescription>
-          </SheetHeader>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1">
-            <Label>显示偏好</Label>
-            <button
-              type="button"
-              onClick={() => changeShowMinimap(!viewPrefs.showMinimap)}
-              className={cn(
-                "flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition-all",
-                viewPrefs.showMinimap
-                  ? "glass-btn text-[var(--ink)]"
-                  : "border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
-              )}
-            >
-              <span className="text-body">小地图</span>
-              <span className="text-caption text-[var(--ink-faint)]">
-                {viewPrefs.showMinimap ? "已显示" : "已隐藏"}
-              </span>
-            </button>
-
-            <Label>数据管理</Label>
-            <Button
-              variant="outline"
-              className="w-full justify-start"
-              onClick={exportJson}
-            >
-              <Download className="h-4 w-4" />
-              导出 JSON
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start"
-              onClick={() => fileRef.current?.click()}
-            >
-              <Upload className="h-4 w-4" />
-              导入 JSON
-            </Button>
-            <Button
-              variant="danger"
-              className="w-full justify-start"
-              onClick={resetAll}
-            >
-              <Trash2 className="h-4 w-4" />
-              清空数据
-            </Button>
-            <p className="pt-1 text-caption text-[var(--ink-faint)]">
-              共 {Object.keys(state.persons).length} 位成员 · 数据仅保存在本机浏览器
-            </p>
-
-            {process.env.NODE_ENV === "development" && (
-              <>
-                <Label>开发</Label>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={reloadDevSample}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  重载示例数据
-                </Button>
-              </>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
+      <SettingsSheet
+        open={activeDialog.kind === "settings"}
+        onOpenChange={(open) => {
+          if (!open) closeDialog();
+        }}
+        viewPrefs={viewPrefs}
+        onChangeShowMinimap={changeShowMinimap}
+        onExport={exportJson}
+        onImport={() => fileRef.current?.click()}
+        onReset={resetAll}
+        memberCount={Object.keys(state.persons).length}
+        onReloadDevSample={
+          process.env.NODE_ENV === "development" ? reloadDevSample : undefined
+        }
+      />
 
       {/* 增加关系：节点上放不下四个按钮，先选种类 */}
       <Sheet
-        open={!!relationPickerFor}
+        open={activeDialog.kind === "relation-picker"}
         onOpenChange={(open) => {
-          if (!open) setRelationPickerFor(null);
+          if (!open) closeDialog();
         }}
       >
         <SheetContent side="responsive">
@@ -607,22 +599,23 @@ export function FamilyApp() {
             <SheetTitle>增加关系</SheetTitle>
             <SheetDescription>
               为「
-              {relationPickerFor
-                ? state.persons[relationPickerFor]?.name ?? "此人"
+              {activeDialog.kind === "relation-picker"
+                ? state.persons[activeDialog.personId]?.name ?? "此人"
                 : "此人"}
               」添加亲属，或关联已有成员
             </SheetDescription>
           </SheetHeader>
           <div className="grid grid-cols-2 gap-2 pb-2">
             {relationOptions(
-              relationPickerFor
-                ? state.persons[relationPickerFor]?.gender ?? "unknown"
+              activeDialog.kind === "relation-picker"
+                ? state.persons[activeDialog.personId]?.gender ?? "unknown"
                 : "unknown",
-              relationPickerFor
+              activeDialog.kind === "relation-picker"
                 ? {
-                    hasFather: !!getFatherId(state, relationPickerFor),
-                    hasMother: !!getMotherId(state, relationPickerFor),
-                    hasPartner: getPartnerIds(state, relationPickerFor).length > 0,
+                    hasFather: !!getFatherId(state, activeDialog.personId),
+                    hasMother: !!getMotherId(state, activeDialog.personId),
+                    hasPartner:
+                      getPartnerIds(state, activeDialog.personId).length > 0,
                   }
                 : {}
             ).map((opt) => (
@@ -633,9 +626,11 @@ export function FamilyApp() {
                 disabled={!!opt.disabledReason}
                 title={opt.disabledReason ?? undefined}
                 onClick={() => {
-                  setFocusId(relationPickerFor);
-                  setRelationPickerFor(null);
-                  setAddMode(opt.kind);
+                  // 添加关系的表单围绕 focus 展开，先把焦点挪过去
+                  if (activeDialog.kind === "relation-picker") {
+                    setFocusId(activeDialog.personId);
+                  }
+                  setActiveDialog({ kind: "add-relation", mode: opt.kind });
                 }}
               >
                 {opt.label}
@@ -654,7 +649,7 @@ export function FamilyApp() {
               以下子女缺一端双亲，而该家长有多位配偶，无法自动确定
             </SheetDescription>
           </SheetHeader>
-          <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-1">
+          <SheetBody className="space-y-2.5">
             {ambiguous.length === 0 ? (
               <p className="py-6 text-center text-caption text-[var(--ink-faint)]">
                 没有待指定的关系
@@ -693,7 +688,7 @@ export function FamilyApp() {
                 </div>
               ))
             )}
-          </div>
+          </SheetBody>
         </SheetContent>
       </Sheet>
 
@@ -710,39 +705,46 @@ export function FamilyApp() {
       />
 
       <PersonEditSheet
-        open={!!editingId}
-        person={editingId ? state.persons[editingId] : null}
+        open={activeDialog.kind === "edit"}
+        person={
+          activeDialog.kind === "edit"
+            ? state.persons[activeDialog.personId] ?? null
+            : null
+        }
         state={state}
-        isMe={editingId === meId}
-        isFocus={editingId === focus}
-        wufu={editingId ? wufuOf(state, editingId) : null}
+        isMe={activeDialog.kind === "edit" && activeDialog.personId === meId}
+        isFocus={activeDialog.kind === "edit" && activeDialog.personId === focus}
+        wufu={
+          activeDialog.kind === "edit"
+            ? graph.wufu.get(activeDialog.personId) ?? null
+            : null
+        }
         onOpenChange={(open) => {
-          if (!open) setEditingId(null);
+          if (!open) closeDialog();
         }}
         onSave={upsertPerson}
         onDelete={deletePerson}
         onSetMe={setAsMe}
         onRecenter={(id) => {
           setFocusId(id);
-          setEditingId(null);
+          closeDialog();
         }}
         onAddRelation={(mode) => {
           // 添加关系的表单是围绕 focus 展开的，所以先把焦点挪过去
-          if (editingId) setFocusId(editingId);
-          setEditingId(null);
-          setAddMode(mode);
+          if (activeDialog.kind === "edit") setFocusId(activeDialog.personId);
+          setActiveDialog({ kind: "add-relation", mode });
         }}
       />
 
       <AddRelationSheet
-        open={!!addMode && !!focus}
-        mode={addMode}
+        open={activeDialog.kind === "add-relation" && !!focus}
+        mode={activeDialog.kind === "add-relation" ? activeDialog.mode : null}
         focusPerson={focus ? state.persons[focus] : null}
         allPersons={state.persons}
         state={state}
         focusId={focus}
         onOpenChange={(open) => {
-          if (!open) setAddMode(null);
+          if (!open) closeDialog();
         }}
         onCreate={handleAddRelation}
         onLinkChild={handleLinkExistingAsChild}
@@ -750,9 +752,23 @@ export function FamilyApp() {
         onLinkSpouse={handleLinkExistingAsSpouse}
       />
 
+      <ConfirmDialog
+        open={!!confirmRequest}
+        title={confirmRequest?.title ?? ""}
+        description={confirmRequest?.description}
+        confirmLabel={confirmRequest?.confirmLabel}
+        danger
+        onConfirm={handleConfirm}
+        onCancel={cancelConfirm}
+      />
+
       {toast && (
         <div className="pointer-events-none fixed inset-x-0 bottom-24 z-[60] flex justify-center px-4">
-          <div className="glass rounded-full px-4 py-2 text-body text-[var(--ink)] shadow-lg">
+          <div
+            role="status"
+            aria-live="polite"
+            className="glass rounded-full px-4 py-2 text-body text-[var(--ink)] shadow-lg"
+          >
             {toast}
           </div>
         </div>
@@ -775,168 +791,13 @@ function ThemeCycleButton({
     <Button
       variant="ghost"
       size="icon-sm"
+      className="hit-40"
       data-header-item
       onClick={() => onChange(next)}
       title={`主题：${THEME_META[mode].label}`}
     >
       <Icon className="h-4 w-4" />
     </Button>
-  );
-}
-
-/* ───────── Search Panel ───────── */
-
-const SEARCH_FILTERS: Array<{ key: string; label: string }> = [
-  { key: "male", label: "男" },
-  { key: "female", label: "女" },
-  { key: "alive", label: "在世" },
-  { key: "dead", label: "已故" },
-];
-
-/**
- * 搜索与筛选合成一个面板（AC-8）。
- * 结果按「以我为原点」的关系距离分组；同辈一桶同时含配偶与兄弟姐妹（配偶权重为 0）。
- */
-function SearchPanel({
-  state,
-  onSelect,
-}: {
-  state: FamilyState;
-  onSelect: (id: string) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [filters, setFilters] = useState<string[]>([]);
-
-  const groups = useMemo(() => groupByRelationDistance(state), [state]);
-
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const match = (p: Person): boolean => {
-      if (q) {
-        const hay = [p.name, p.ancestralHome, p.household]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      if (filters.length === 0) return true;
-      return filters.some((f) => {
-        if (f === "male") return p.gender === "male";
-        if (f === "female") return p.gender === "female";
-        if (f === "alive") return !p.deathYear;
-        if (f === "dead") return !!p.deathYear;
-        return true;
-      });
-    };
-    return groups
-      .map((g) => ({
-        ...g,
-        ids: g.ids.filter((id) => {
-          const p = state.persons[id];
-          return p ? match(p) : false;
-        }),
-      }))
-      .filter((g) => g.ids.length > 0);
-  }, [groups, query, filters, state.persons]);
-
-  const total = visible.reduce((n, g) => n + g.ids.length, 0);
-
-  const toggle = (key: string) =>
-    setFilters((f) =>
-      f.includes(key) ? f.filter((x) => x !== key) : [...f, key]
-    );
-
-  return (
-    <div
-      data-search-root
-      className="w-full shrink-0 border-b border-[var(--glass-edge)] bg-[var(--bg-0)]/60 backdrop-blur-xl"
-    >
-      <div className="mx-auto w-full max-w-5xl px-4 py-3 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-2 rounded-2xl border border-[var(--glass-border)] bg-[var(--glass)] px-3 py-2">
-          <Search className="h-4 w-4 shrink-0 text-[var(--ink-faint)]" />
-          <input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索姓名 / 籍贯 / 户籍"
-            className="w-full bg-transparent text-body text-[var(--ink)] outline-none placeholder:text-[var(--ink-faint)]"
-          />
-          <span className="shrink-0 text-caption text-[var(--ink-faint)]">
-            {total}
-          </span>
-        </div>
-
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {SEARCH_FILTERS.map((f) => {
-            const active = filters.includes(f.key);
-            return (
-              <button
-                key={f.key}
-                type="button"
-                data-filter-chip
-                onClick={() => toggle(f.key)}
-                className={cn(
-                  "rounded-full px-3 py-1 text-caption transition-colors",
-                  active
-                    ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                    : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
-                )}
-              >
-                {f.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="mt-3 max-h-[50dvh] overflow-y-auto px-1 -mx-1">
-          {visible.length === 0 ? (
-            <p className="py-6 text-center text-caption text-[var(--ink-faint)]">
-              没有匹配的成员
-            </p>
-          ) : (
-            visible.map((g) => (
-              <section key={g.key} className="mb-3 last:mb-0">
-                <h2 className="mb-1.5 text-caption font-medium text-[var(--ink-faint)]">
-                  {g.label} · {g.ids.length}
-                </h2>
-                <ul className="space-y-1">
-                  {g.ids.map((id) => {
-                    const p = state.persons[id];
-                    if (!p) return null;
-                    const detail = [p.birthYear, p.ancestralHome]
-                      .filter(Boolean)
-                      .join(" · ");
-                    return (
-                      <li key={id}>
-                        <button
-                          type="button"
-                          onClick={() => onSelect(id)}
-                          className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-[var(--glass-strong)]"
-                        >
-                          <span className="truncate text-body text-[var(--ink)]">
-                            {p.name}
-                          </span>
-                          {state.meId === id && (
-                            <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-caption text-[var(--accent)]">
-                              我
-                            </span>
-                          )}
-                          {detail && (
-                            <span className="ml-auto shrink-0 text-caption text-[var(--ink-faint)]">
-                              {detail}
-                            </span>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            ))
-          )}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -973,7 +834,13 @@ function EmptyState({
         </p>
       </div>
 
-      <div className="space-y-4">
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onStart(name.trim() || "我", gender);
+        }}
+      >
         <div className="space-y-1.5">
           <Label htmlFor="me-name">你的名字</Label>
           <Input
@@ -985,683 +852,10 @@ function EmptyState({
           />
         </div>
         <GenderPicker value={gender} onChange={setGender} />
-        <Button
-          className="w-full"
-          size="lg"
-          onClick={() => onStart(name.trim() || "我", gender)}
-        >
+        <Button className="w-full" size="lg" type="submit">
           开始建立
         </Button>
-      </div>
+      </form>
     </div>
-  );
-}
-
-function GenderPicker({
-  value,
-  onChange,
-}: {
-  value: Gender;
-  onChange: (g: Gender) => void;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label>性别</Label>
-      <div className="grid grid-cols-3 gap-2">
-        {(
-          [
-            ["male", "男"],
-            ["female", "女"],
-            ["unknown", "未知"],
-          ] as const
-        ).map(([v, label]) => (
-          <button
-            key={v}
-            type="button"
-            onClick={() => onChange(v)}
-            className={cn(
-              "h-10 rounded-2xl text-body transition-all",
-              value === v
-                ? "glass-btn text-[var(--ink)]"
-                : "border border-[var(--glass-border)] text-[var(--ink-soft)] hover:bg-[var(--glass-strong)]"
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ───────── Tree ───────── */
-
-/* ───────── Family Events ───────── */
-
-const EVENT_LABELS: Record<EventType, string> = {
-  marriage: "婚嫁",
-  migration: "迁徙",
-  birth: "出生",
-  death: "离世",
-  education: "褒学",
-  custom: "其他",
-};
-
-/**
- * 生平事件编辑器。默认折叠——事件只在编辑面板里出现，
- * 不放到卡片正面，否则锚点卡片会被塞爆（AC-31）。
- */
-function FamilyEventList({
-  events,
-  onChange,
-}: {
-  events: FamilyEvent[];
-  onChange: (next: FamilyEvent[]) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  const update = (id: string, patch: Partial<FamilyEvent>) =>
-    onChange(events.map((e) => (e.id === id ? { ...e, ...patch } : e)));
-
-  const add = () =>
-    onChange([
-      ...events,
-      {
-        id: newId(),
-        type: "custom",
-        date: "",
-        place: "",
-        note: "",
-      },
-    ]);
-
-  const remove = (id: string) => onChange(events.filter((e) => e.id !== id));
-
-  return (
-    <div className="space-y-2 rounded-2xl border border-[var(--glass-border)] bg-[var(--glass)] p-3">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between text-left"
-      >
-        <span className="text-body font-medium text-[var(--ink)]">家族事件</span>
-        <span className="flex items-center gap-2 text-caption text-[var(--ink-faint)]">
-          {events.length > 0 && <span>{events.length} 条</span>}
-          <ChevronDown
-            className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
-          />
-        </span>
-      </button>
-
-      {open && (
-        <div className="space-y-3 pt-1">
-          {events.length === 0 && (
-            <p className="text-caption text-[var(--ink-faint)]">
-              还没有记录。可以记婚嫁、迁徙、褒学等。
-            </p>
-          )}
-          {events.map((ev) => (
-            <div
-              key={ev.id}
-              className="space-y-2 rounded-xl border border-[var(--glass-edge)] p-2.5"
-            >
-              <div className="flex items-center gap-2">
-                <select
-                  value={ev.type}
-                  onChange={(e) =>
-                    update(ev.id, { type: e.target.value as EventType })
-                  }
-                  aria-label="事件类型"
-                  className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass)] px-2 py-1 text-caption text-[var(--ink)]"
-                >
-                  {EVENT_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {EVENT_LABELS[t]}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  value={ev.date}
-                  onChange={(e) => update(ev.id, { date: e.target.value })}
-                  placeholder="时间，如：约1950"
-                  className="h-8 flex-1"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => remove(ev.id)}
-                  title="删除事件"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-              <Input
-                value={ev.place ?? ""}
-                onChange={(e) => update(ev.id, { place: e.target.value })}
-                placeholder="地点（可选）"
-                className="h-8"
-              />
-              <Input
-                value={ev.note ?? ""}
-                onChange={(e) => update(ev.id, { note: e.target.value })}
-                placeholder="备注（可选）"
-                className="h-8"
-              />
-            </div>
-          ))}
-          <Button variant="outline" size="sm" onClick={add}>
-            <Plus className="h-3.5 w-3.5" />
-            新增事件
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ───────── Edit Sheet ───────── */
-
-function PersonEditSheet({
-  open,
-  person,
-  state,
-  isMe,
-  isFocus,
-  wufu,
-  onOpenChange,
-  onSave,
-  onDelete,
-  onSetMe,
-  onRecenter,
-  onAddRelation,
-}: {
-  open: boolean;
-  person: Person | null;
-  state: FamilyState;
-  isMe: boolean;
-  isFocus: boolean;
-  wufu: WufuResult | null;
-  onOpenChange: (open: boolean) => void;
-  onSave: (p: Person) => void;
-  onDelete: (id: string) => void;
-  onSetMe: (id: string) => void;
-  onRecenter: (id: string) => void;
-  onAddRelation: (mode: RelationKind) => void;
-}) {
-  const [draft, setDraft] = useState<Person | null>(null);
-
-  useEffect(() => {
-    if (open && person) setDraft({ ...person });
-  }, [open, person]);
-
-  if (!draft) return null;
-
-  const set = <K extends keyof Person>(k: K, v: Person[K]) =>
-    setDraft((d) => (d ? { ...d, [k]: v } : d));
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="responsive">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
-            编辑人物
-            {isMe && (
-              <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-caption font-medium text-[var(--accent)]">
-                我
-              </span>
-            )}
-          </SheetTitle>
-          <SheetDescription>完善姓名、生卒、籍贯与户籍信息</SheetDescription>
-
-          {/* 推导出来的信息集中放在这里：都不是存储字段，改生年/关系后自动重算 */}
-          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            {(() => {
-              const z = zodiacOf(draft.birthYear);
-              return z ? (
-                <span className="rounded-full bg-[var(--glass-strong)] px-2 py-0.5 text-caption text-[var(--ink-soft)]">
-                  属{z.label}
-                  {z.approx && <span className="text-[var(--ink-faint)]">（推）</span>}
-                </span>
-              ) : null;
-            })()}
-            {(() => {
-              const age = lifespanOf(draft);
-              return age !== null ? (
-                <span className="rounded-full bg-[var(--glass-strong)] px-2 py-0.5 text-caption text-[var(--ink-soft)]">
-                  享年 {age}
-                </span>
-              ) : null;
-            })()}
-            {wufu && (
-              <span
-                className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-caption text-[var(--accent)]"
-                title={`${wufu.basis} · 服期 ${wufu.months}`}
-              >
-                {wufu.grade}
-              </span>
-            )}
-          </div>
-          {wufu && (
-            <p
-              className="truncate pt-1 text-caption text-[var(--ink-faint)]"
-              title={wufu.basis}
-            >
-              <span className="text-[var(--ink-soft)]">{wufu.grade}</span>
-              （{wufu.months}） · {wufu.basis}
-            </p>
-          )}
-        </SheetHeader>
-
-        {/* 纵向可滚动；保存按钮在滚动区之外，不会被推走 */}
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1">
-          <div className="space-y-1">
-            <Label htmlFor="p-name">姓名</Label>
-            <Input
-              id="p-name"
-              value={draft.name}
-              onChange={(e) => set("name", e.target.value)}
-              maxLength={30}
-            />
-          </div>
-
-          <GenderPicker
-            value={draft.gender}
-            onChange={(g) => set("gender", g)}
-          />
-
-          <div className="space-y-1">
-            <Label htmlFor="p-birth-y">出生年月日</Label>
-            <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] gap-2">
-              <Input
-                id="p-birth-y"
-                inputMode="numeric"
-                placeholder="年，如 1950"
-                value={draft.birthYear ?? ""}
-                onChange={(e) => set("birthYear", e.target.value)}
-                maxLength={8}
-              />
-              <Input
-                aria-label="出生月"
-                inputMode="numeric"
-                placeholder="月"
-                value={draft.birthMonth ?? ""}
-                onChange={(e) => set("birthMonth", e.target.value)}
-                maxLength={2}
-              />
-              <Input
-                aria-label="出生日"
-                inputMode="numeric"
-                placeholder="日"
-                value={draft.birthDay ?? ""}
-                onChange={(e) => set("birthDay", e.target.value)}
-                maxLength={2}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="p-death-y">逝世年月日</Label>
-            <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] gap-2">
-              <Input
-                id="p-death-y"
-                inputMode="numeric"
-                placeholder="年"
-                value={draft.deathYear ?? ""}
-                onChange={(e) => set("deathYear", e.target.value)}
-                maxLength={8}
-              />
-              <Input
-                aria-label="逝世月"
-                inputMode="numeric"
-                placeholder="月"
-                value={draft.deathMonth ?? ""}
-                onChange={(e) => set("deathMonth", e.target.value)}
-                maxLength={2}
-              />
-              <Input
-                aria-label="逝世日"
-                inputMode="numeric"
-                placeholder="日"
-                value={draft.deathDay ?? ""}
-                onChange={(e) => set("deathDay", e.target.value)}
-                maxLength={2}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="p-home">籍贯</Label>
-              <Input
-                id="p-home"
-                placeholder="浙江省三门县"
-                value={draft.ancestralHome ?? ""}
-                onChange={(e) => set("ancestralHome", e.target.value)}
-                maxLength={50}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="p-hh">户籍</Label>
-              <Input
-                id="p-hh"
-                placeholder="浙江省三门县"
-                value={draft.household ?? ""}
-                onChange={(e) => set("household", e.target.value)}
-                maxLength={50}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="p-note">备注</Label>
-            <Input
-              id="p-note"
-              placeholder="可选"
-              value={draft.note ?? ""}
-              onChange={(e) => set("note", e.target.value)}
-              maxLength={100}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="p-photo">照片链接</Label>
-            <Input
-              id="p-photo"
-              placeholder="https://… 外置图片地址（可留空）"
-              value={draft.photoUrl ?? ""}
-              onChange={(e) => set("photoUrl", e.target.value)}
-              inputMode="url"
-            />
-          </div>
-
-          <FamilyEventList
-            events={draft.events ?? []}
-            onChange={(next) => set("events", next)}
-          />
-        </div>
-
-        {/* 添加亲属的入口。原本挂在树的空槽上，改用画布后必须换个地方。
-            可用性与默认性别规则在 lib 的 relationOptions，与选择面板同源。 */}
-        <div className="space-y-1 pt-1">
-          <Label>添加亲属</Label>
-          <div className="flex flex-wrap gap-1.5">
-            {relationOptions(draft.gender, {
-              hasFather: !!getFatherId(state, draft.id),
-              hasMother: !!getMotherId(state, draft.id),
-              hasPartner: getPartnerIds(state, draft.id).length > 0,
-            })
-              .filter((opt) => !opt.disabledReason)
-              .map((opt) => (
-                <Button
-                  key={opt.kind}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onAddRelation(opt.kind)}
-                >
-                  + {opt.label}
-                </Button>
-              ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2 pt-1">
-          <div className="flex gap-2">
-            {!isMe && (
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => {
-                  onSetMe(draft.id);
-                  onOpenChange(false);
-                }}
-              >
-                <UserCheck className="h-4 w-4" />
-                设为我
-              </Button>
-            )}
-            {/* 卡片点击不再重定心（免得被误当成切换「我」），所以这里显式给一个 */}
-            {!isFocus && (
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => onRecenter(draft.id)}
-              >
-                <Home className="h-4 w-4" />
-                以此人为中心
-              </Button>
-            )}
-            <Button
-              variant="danger"
-              size="icon"
-              onClick={() => onDelete(draft.id)}
-              title="删除"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-          <Button
-            size="lg"
-            onClick={() => {
-              onSave({ ...draft, updatedAt: Date.now() });
-              onOpenChange(false);
-            }}
-          >
-            保存
-          </Button>
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-/* ───────── Add Relation Sheet ───────── */
-
-function AddRelationSheet({
-  open,
-  mode,
-  focusPerson,
-  allPersons,
-  state,
-  focusId,
-  onOpenChange,
-  onCreate,
-  onLinkChild,
-  onLinkParent,
-  onLinkSpouse,
-}: {
-  open: boolean;
-  mode: AddMode;
-  focusPerson: Person | null;
-  allPersons: Record<string, Person>;
-  state: FamilyState;
-  focusId: string | null;
-  onOpenChange: (open: boolean) => void;
-  onCreate: (mode: RelationKind, draft: { name: string; gender: Gender }) => void;
-  onLinkChild: (childId: string) => void;
-  onLinkParent: (parentId: string, role: "father" | "mother") => void;
-  onLinkSpouse: (otherId: string) => void;
-}) {
-  const [tab, setTab] = useState<"new" | "existing">("new");
-  const [name, setName] = useState("");
-  const [gender, setGender] = useState<Gender>("unknown");
-  const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    if (open) {
-      setTab("new");
-      setName("");
-      setSearch("");
-      setGender(mode ? defaultGenderFor(mode) : "unknown");
-    }
-  }, [open, mode]);
-
-  const ADD_TITLES: Record<RelationKind, string> = {
-    father: "添加父亲",
-    mother: "添加母亲",
-    husband: "添加丈夫",
-    wife: "添加妻子",
-    son: "添加儿子",
-    daughter: "添加女儿",
-  };
-  const title = mode ? ADD_TITLES[mode] : "添加关系";
-
-  const candidates = useMemo(() => {
-    if (!focusId || !mode) return [];
-    const base = relationBaseOf(mode);
-    return Object.values(allPersons)
-      .filter((p) => p.id !== focusId)
-      .filter((p) => {
-        if (!search.trim()) return true;
-        const q = search.trim();
-        return (
-          p.name.includes(q) ||
-          (p.ancestralHome || "").includes(q) ||
-          (p.household || "").includes(q)
-        );
-      })
-      .filter((p) => {
-        if (base === "spouse") {
-          if (areSpouses(state, focusId, p.id)) return false;
-          // 夫/妻已经表达了期望性别；性别未知的候选不排除
-          const want = mode === "husband" ? "male" : "female";
-          return p.gender === "unknown" || p.gender === want;
-        }
-        if (base === "child") {
-          const parents = state.parents[p.id];
-          return (
-            parents?.fatherId !== focusId && parents?.motherId !== focusId
-          );
-        }
-        const existing = state.parents[focusId];
-        if (mode === "father") return existing?.fatherId !== p.id;
-        if (mode === "mother") return existing?.motherId !== p.id;
-        return true;
-      })
-      .slice(0, 40);
-  }, [allPersons, focusId, mode, search, state]);
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="responsive">
-        <SheetHeader>
-          <SheetTitle>{title}</SheetTitle>
-          <SheetDescription>
-            {focusPerson ? `为「${focusPerson.name}」建立关系` : ""}
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className="grid grid-cols-2 gap-1 rounded-2xl bg-[var(--glass)] p-1">
-          {(
-            [
-              ["new", "新建人物"],
-              ["existing", "关联已有"],
-            ] as const
-          ).map(([v, label]) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => setTab(v)}
-              className={cn(
-                "rounded-xl py-2 text-body transition-all",
-                tab === v
-                  ? "glass-btn text-[var(--ink)]"
-                  : "text-[var(--ink-soft)] hover:text-[var(--ink)]"
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {tab === "new" ? (
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1">
-            <div className="space-y-1">
-              <Label htmlFor="a-name">姓名</Label>
-              <Input
-                id="a-name"
-                placeholder="输入姓名"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                maxLength={30}
-              />
-            </div>
-            <GenderPicker value={gender} onChange={setGender} />
-            {relationBaseOf(mode ?? "father") === "child" && (
-              <p className="text-caption text-[var(--ink-faint)]">
-                若当前人物有配偶，将自动关联为双亲。
-              </p>
-            )}
-            <Button
-              size="lg"
-              className="w-full"
-              onClick={() => {
-                if (!mode) return;
-                onCreate(mode, { name: name.trim() || "未命名", gender });
-              }}
-            >
-              <Plus className="h-4 w-4" />
-              创建并关联
-            </Button>
-          </div>
-        ) : (
-          <div className="flex flex-1 flex-col gap-3 overflow-hidden">
-            <Input
-              placeholder="搜索姓名 / 籍贯 / 户籍"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-1 pb-2">
-              {candidates.length === 0 ? (
-                <p className="py-8 text-center text-body text-[var(--ink-faint)]">
-                  暂无可关联人物
-                </p>
-              ) : (
-                candidates.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => {
-                      if (!mode) return;
-                      const base = relationBaseOf(mode);
-                      if (base === "child") onLinkChild(p.id);
-                      else if (base === "spouse") onLinkSpouse(p.id);
-                      else onLinkParent(p.id, base);
-                    }}
-                    className="glass flex w-full items-center gap-3 rounded-2xl p-3 text-left transition hover:brightness-105"
-                  >
-                    <div
-                      className={cn(
-                        "flex h-10 w-10 items-center justify-center rounded-xl text-body font-semibold text-white",
-                        p.gender === "male" && "avatar-male",
-                        p.gender === "female" && "avatar-female",
-                        p.gender === "unknown" && "avatar-unknown"
-                      )}
-                    >
-                      {p.name.slice(0, 1)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-body font-medium text-[var(--ink)]">
-                        {p.name}
-                      </p>
-                      <p className="truncate text-caption text-[var(--ink-soft)]">
-                        {[
-                          p.ancestralHome && `籍 ${p.ancestralHome}`,
-                          p.household && `户 ${p.household}`,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ") || "—"}
-                      </p>
-                    </div>
-                    <Plus className="h-4 w-4 shrink-0 text-[var(--ink-faint)]" />
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-      </SheetContent>
-    </Sheet>
   );
 }

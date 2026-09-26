@@ -19,6 +19,9 @@
   --text-subtitle: 1.0625rem;
   --text-body: 0.9375rem;
   --text-caption: 0.8125rem;
+  /* 表单输入专用：iOS 在聚焦字号小于 16px 的输入框时会自动放大页面，
+     16px 是唯一豁免线。仅用于 input，不参与正文字阶。 */
+  --text-input: 1rem;
 
   --color-background: var(--bg-0);
   --color-foreground: var(--ink);
@@ -381,6 +384,32 @@ body {
 
 .safe-bottom {
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+/* 刘海屏/灵动岛：header 顶部让开安全区（此前只有底部适配） */
+.safe-top {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+
+/* 把 28px 视觉按钮的可点击热区扩到 40px（Apple 最小触控目标），
+   视觉尺寸不变。::after 是按钮自身的一部分，落在上面的指针事件
+   仍以按钮为目标。相邻按钮间距 6px 时热区恰好相接不重叠。 */
+.hit-40 {
+  position: relative;
+}
+
+.hit-40::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+
+/* 弹窗遮罩关闭后到卸载前的窗口期不得吞掉指针事件。
+   Radix 要等退场动画的 animationend 才卸载遮罩；一旦动画事件
+   被环境吞掉（内嵌浏览器、被挂起的后台标签），遮罩会带着
+   pointer-events:auto 永久留在 DOM 上挡住整页 —— 这里用 CSS 兜住。 */
+.sheet-overlay[data-state="closed"] {
+  pointer-events: none !important;
 }
 
 ::-webkit-scrollbar {
